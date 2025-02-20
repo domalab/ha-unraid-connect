@@ -1,0 +1,149 @@
+{
+    "config": {
+      "step": {
+        "user": {
+          "title": "Connect to Unraid Server",
+          "description": "Set up Unraid integration to monitor and control your server",
+          "data": {
+            "host": "Host or IP Address",
+            "api_key": "API Key",
+            "name": "Name (Optional)"
+          }
+        },
+        "reauth_confirm": {
+          "title": "Reauthenticate with Unraid",
+          "description": "The Unraid integration needs to re-authenticate your account. Please enter your API key.",
+          "data": {
+            "api_key": "API Key"
+          }
+        }
+      },
+      "error": {
+        "cannot_connect": "Failed to connect to the server. Please check the host and ensure the Unraid API is running.",
+        "invalid_auth": "Invalid API key. Please generate a new key with the unraid-api command.",
+        "unknown": "An unexpected error occurred.",
+        "entry_not_found": "Unraid server entry not found."
+      },
+      "abort": {
+        "already_configured": "This Unraid server is already configured.",
+        "reauth_successful": "Re-authentication was successful."
+      }
+    },
+    "options": {
+      "step": {
+        "init": {
+          "title": "Unraid Options",
+          "description": "Configure Unraid integration options",
+          "data": {
+            "scan_interval": "Data update interval (seconds)"
+          }
+        }
+      }
+    },
+    "services": {
+      "array_operation": {
+        "name": "Array Operation",
+        "description": "Performs an operation on the Unraid array.",
+        "fields": {
+          "operation": {
+            "name": "Operation",
+            "description": "The operation to perform (start, stop, pause, resume, check, cancel_check)."
+          }
+        }
+      },
+      "docker_container": {
+        "name": "Docker Container Control",
+        "description": "Control a Docker container on your Unraid server.",
+        "fields": {
+          "container_id": {
+            "name": "Container ID",
+            "description": "The ID of the Docker container to control."
+          },
+          "action": {
+            "name": "Action",
+            "description": "The action to perform (start, stop, restart, pause, unpause)."
+          }
+        }
+      }
+    },
+    "entity": {
+      "binary_sensor": {
+        "array_protection": {
+          "name": "Array Protection",
+          "state": {
+            "on": "Protected",
+            "off": "Unprotected"
+          }
+        },
+        "array_started": {
+          "name": "Array Started",
+          "state": {
+            "on": "Started",
+            "off": "Stopped"
+          }
+        },
+        "parity_check_running": {
+          "name": "Parity Check Running",
+          "state": {
+            "on": "Running",
+            "off": "Idle"
+          }
+        }
+      },
+      "sensor": {
+        "cpu_cores": {
+          "name": "CPU Cores"
+        },
+        "cpu_threads": {
+          "name": "CPU Threads"
+        },
+        "cpu_temperature": {
+          "name": "CPU Temperature"
+        },
+        "cpu_load": {
+          "name": "CPU Load"
+        },
+        "memory_used_percent": {
+          "name": "Memory Usage"
+        },
+        "memory_available": {
+          "name": "Memory Available"
+        },
+        "uptime": {
+          "name": "Uptime"
+        },
+        "array_state": {
+          "name": "Array State",
+          "state": {
+            "started": "Started",
+            "stopped": "Stopped",
+            "mounting": "Mounting",
+            "unmounting": "Unmounting",
+            "starting": "Starting",
+            "stopping": "Stopping"
+          }
+        },
+        "array_capacity": {
+          "name": "Array Capacity"
+        },
+        "array_size": {
+          "name": "Array Size"
+        },
+        "array_used": {
+          "name": "Array Used"
+        },
+        "array_free": {
+          "name": "Array Free"
+        },
+        "parity_check_progress": {
+          "name": "Parity Check Progress"
+        },
+        "parity_check_speed": {
+          "name": "Parity Check Speed"
+        },
+        "parity_check_eta": {
+          "name": "Parity Check ETA"
+        }
+      }
+    }
+  }
