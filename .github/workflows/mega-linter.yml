@@ -35,6 +35,12 @@ jobs:
           token: ${{ secrets.PAT || secrets.GITHUB_TOKEN }}
           fetch-depth: 0 # Fetch full history to allow linting of all files
 
+      # Install Dependencencies
+      - name: Install Dependencies
+        run: |
+          pip install homeassistant
+          pip install -r requirements.txt
+
       # MegaLinter
       - name: MegaLinter
         id: ml
