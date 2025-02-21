@@ -9,7 +9,7 @@ on:
 
 env:
   APPLY_FIXES: "PYTHON_BLACK,PYTHON_ISORT" # Apply fixes only for Black and Isort
-  APPLY_FIXES_EVENT: pull_request # Apply fixes only during pull requests
+  APPLY_FIXES_EVENT: all # Apply all fixes
   APPLY_FIXES_MODE: commit # Commit fixes directly to the branch
   VALIDATE_ALL_CODEBASE: true # Validate all files in the repository
   LOG_LEVEL: DEBUG # Enable verbose logging for debugging
