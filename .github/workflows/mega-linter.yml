@@ -39,7 +39,6 @@ jobs:
       - name: Install Dependencies
         run: |
           pip install homeassistant
-          pip install -r requirements.txt
 
       # MegaLinter
       - name: MegaLinter
