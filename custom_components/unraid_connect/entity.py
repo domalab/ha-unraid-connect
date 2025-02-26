@@ -1,155 +1,148 @@
-"""
-Base entity for Unraid integration.
-"""
-from __future__ import annotations
+"""Base entity classes for Unraid integration."""
+from typing import Any, Dict, Optional
 
-from typing import Any
-
-from homeassistant.helpers.device_registry import DeviceEntryType
+from homeassistant.core import callback
 from homeassistant.helpers.entity import DeviceInfo, Entity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, LOGGER
+from .const import DOMAIN, ICON_SERVER
+from .coordinator import UnraidDataUpdateCoordinator
 
 
 class UnraidEntity(CoordinatorEntity, Entity):
     """Base entity for Unraid integration."""
 
-    _attr_has_entity_name = True
-
-    def __init__(self, coordinator, config_entry, description=None):
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+        entity_type: str,
+        entity_key: str,
+    ):
         """Initialize the entity."""
         super().__init__(coordinator)
-        self._config_entry = config_entry
-        self._attr_device_info = self._get_device_info()
-        
-        if description is not None:
-            self.entity_description = description
-            self._attr_unique_id = f"{config_entry.entry_id}_{description.key}"
-            
-        LOGGER.debug("Initialized %s entity: %s", self.__class__.__name__, 
-                    getattr(self, "unique_id", "unknown"))
+        self._server_name = server_name
+        self._entity_type = entity_type
+        self._entity_key = entity_key
+        self._attr_has_entity_name = True
+        self._attr_unique_id = f"{coordinator.api.host}_{entity_type}_{entity_key}"
 
-    def _get_device_info(self) -> DeviceInfo:
-        """Return device information for this entity."""
-        try:
-            system_info = self.coordinator.data.get("system", {})
-            
-            # Get OS information
-            os_info = system_info.get("os", {})
-            platform = os_info.get("platform", "unknown")
-            distro = os_info.get("distro", "Unraid")
-            release = os_info.get("release", "unknown")
-            
-            # Get hardware information if available
-            hw_info = ""
-            if "cpu" in system_info:
-                cpu = system_info["cpu"]
-                if "manufacturer" in cpu and "brand" in cpu:
-                    hw_info = f"{cpu.get('manufacturer')} {cpu.get('brand')}"
-                    
-            model = f"{distro} {release}"
-            if hw_info:
-                model = f"{model} on {hw_info}"
-                
-            return DeviceInfo(
-                identifiers={(DOMAIN, self._config_entry.entry_id)},
-                name=f"Unraid Server ({self._config_entry.data.get('host')})",
-                manufacturer="Lime Technology, Inc.",
-                model=model,
-                sw_version=release,
-                entry_type=DeviceEntryType.SERVICE,
-                configuration_url=f"http://{self._config_entry.data.get('host')}/Dashboard",
-            )
-        except Exception as err:
-            LOGGER.warning("Error generating device info: %s", err)
-            return DeviceInfo(
-                identifiers={(DOMAIN, self._config_entry.entry_id)},
-                name=f"Unraid Server ({self._config_entry.data.get('host')})",
-                manufacturer="Lime Technology, Inc.",
-                model="Unraid Server",
-                entry_type=DeviceEntryType.SERVICE,
-            )
-            
     @property
-    def available(self) -> bool:
-        """Return if entity is available."""
-        return self.coordinator.last_update_success
+    def device_info(self) -> DeviceInfo:
+        """Return device information for this entity."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self.coordinator.api.host)},
+            name=self._server_name,
+            manufacturer="Unraid",
+            model=self._get_unraid_version(),
+            configuration_url=self.coordinator.api.host,
+        )
+
+    def _get_unraid_version(self) -> str:
+        """Get the Unraid version from the API data."""
+        try:
+            return self.coordinator.data.get("system_info", {}).get("info", {}).get("versions", {}).get("unraid", "Unknown")
+        except (KeyError, AttributeError):
+            return "Unknown"
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+
+class UnraidSystemEntity(UnraidEntity):
+    """Base entity for Unraid system entities."""
+
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+        entity_key: str,
+    ):
+        """Initialize the entity."""
+        super().__init__(coordinator, server_name, "system", entity_key)
+        self._attr_icon = ICON_SERVER
+
+
+class UnraidArrayEntity(UnraidEntity):
+    """Base entity for Unraid array entities."""
+
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+        entity_key: str,
+    ):
+        """Initialize the entity."""
+        super().__init__(coordinator, server_name, "array", entity_key)
+
+
+class UnraidDiskEntity(UnraidEntity):
+    """Base entity for Unraid disk entities."""
+
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+        entity_key: str,
+        disk_id: str,
+        disk_type: str,
+    ):
+        """Initialize the entity."""
+        super().__init__(coordinator, server_name, "disk", entity_key)
+        self._disk_id = disk_id
+        self._disk_type = disk_type
+        # Update unique ID to include disk ID
+        self._attr_unique_id = f"{coordinator.api.host}_disk_{disk_id}_{entity_key}"
 
 
 class UnraidDockerEntity(UnraidEntity):
-    """Base entity for Unraid Docker container entities."""
+    """Base entity for Unraid Docker entities."""
 
-    def __init__(self, coordinator, config_entry, container_id, container_name):
-        """Initialize the Docker container entity."""
-        super().__init__(coordinator, config_entry)
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+        entity_key: str,
+        container_id: str,
+    ):
+        """Initialize the entity."""
+        super().__init__(coordinator, server_name, "docker", entity_key)
         self._container_id = container_id
-        self._container_name = container_name
-        self._attr_unique_id = f"{config_entry.entry_id}_docker_{container_id}"
-        self._attr_name = container_name
-        self._attr_device_info = self._get_docker_device_info()
-        
-    def _get_docker_device_info(self) -> DeviceInfo:
-        """Return device information for this Docker container."""
-        try:
-            # Get container details
-            container = self._get_container_data()
-            
-            if not container:
-                # Fall back to basic info if container not found
-                return DeviceInfo(
-                    identifiers={(DOMAIN, f"docker_{self._container_id}")},
-                    name=f"Docker: {self._container_name}",
-                    manufacturer="Docker",
-                    model="Container",
-                    via_device=(DOMAIN, self._config_entry.entry_id),
-                )
-                
-            # If we have container info, create more detailed device info
-            image = container.get("image", "unknown")
-            image_parts = image.split(":")
-            sw_version = "latest"
-            if len(image_parts) > 1:
-                sw_version = image_parts[1]
-                
-            return DeviceInfo(
-                identifiers={(DOMAIN, f"docker_{self._container_id}")},
-                name=f"Docker: {self._container_name}",
-                manufacturer="Docker",
-                model=image_parts[0] if len(image_parts) > 0 else image,
-                sw_version=sw_version,
-                via_device=(DOMAIN, self._config_entry.entry_id),
-                configuration_url=f"http://{self._config_entry.data.get('host')}/Docker",
-            )
-        except Exception as err:
-            LOGGER.warning("Error generating Docker device info: %s", err)
-            return DeviceInfo(
-                identifiers={(DOMAIN, f"docker_{self._container_id}")},
-                name=f"Docker: {self._container_name}",
-                manufacturer="Docker",
-                via_device=(DOMAIN, self._config_entry.entry_id),
-            )
-            
-    def _get_container_data(self) -> dict[str, Any] | None:
-        """Get the container data from coordinator data."""
-        try:
-            if not self.coordinator.data or "docker" not in self.coordinator.data:
-                return None
-                
-            for container in self.coordinator.data["docker"]:
-                if container.get("id") == self._container_id:
-                    return container
-                    
-            return None
-        except Exception as err:
-            LOGGER.warning("Error fetching container data: %s", err)
-            return None
-            
-    @property
-    def available(self) -> bool:
-        """Return if entity is available."""
-        if not super().available:
-            return False
-            
-        # Entity is only available if the container still exists
-        return self._get_container_data() is not None
+        # Update unique ID to include container ID
+        self._attr_unique_id = f"{coordinator.api.host}_docker_{container_id}_{entity_key}"
+
+
+class UnraidVMEntity(UnraidEntity):
+    """Base entity for Unraid VM entities."""
+
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+        entity_key: str,
+        vm_id: str,
+    ):
+        """Initialize the entity."""
+        super().__init__(coordinator, server_name, "vm", entity_key)
+        self._vm_id = vm_id
+        # Update unique ID to include VM ID
+        self._attr_unique_id = f"{coordinator.api.host}_vm_{vm_id}_{entity_key}"
+
+
+class UnraidShareEntity(UnraidEntity):
+    """Base entity for Unraid share entities."""
+
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+        entity_key: str,
+        share_name: str,
+    ):
+        """Initialize the entity."""
+        super().__init__(coordinator, server_name, "share", entity_key)
+        self._share_name = share_name
+        # Update unique ID to include share name
+        self._attr_unique_id = f"{coordinator.api.host}_share_{share_name}_{entity_key}"

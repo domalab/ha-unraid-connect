@@ -1,101 +1,103 @@
-"""
-Data update coordinator for the Unraid integration.
-"""
-from __future__ import annotations
-
-import asyncio
+"""DataUpdateCoordinator for Unraid integration."""
+import logging
 from datetime import timedelta
-from typing import Any, Callable
+from typing import Any, Dict
 
 import async_timeout
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from gql.transport.exceptions import TransportQueryError, TransportServerError
+from homeassistant.exceptions import ConfigEntryAuthFailed
 
-from .api import UnraidAPI
-from .const import DOMAIN, LOGGER, DEFAULT_SCAN_INTERVAL
+from .api import UnraidApiClient, UnraidApiError
+from .const import DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
+
 
 class UnraidDataUpdateCoordinator(DataUpdateCoordinator):
-    """Class to manage fetching data from the Unraid API."""
+    """Class to manage fetching Unraid data."""
 
     def __init__(
         self,
         hass: HomeAssistant,
-        api: UnraidAPI,
-        update_interval: timedelta | None = None,
-    ) -> None:
-        """Initialize coordinator."""
+        api: UnraidApiClient,
+        update_interval: int,
+        name: str,
+    ):
+        """Initialize the coordinator."""
         self.api = api
-        self.hass = hass
-        
+        self.name = name
+        self.data = {}
+
         super().__init__(
             hass,
-            LOGGER,
+            _LOGGER,
             name=DOMAIN,
-            update_interval=update_interval or timedelta(seconds=DEFAULT_SCAN_INTERVAL),
+            update_interval=timedelta(seconds=update_interval),
         )
 
-    async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch data from API."""
-        LOGGER.debug("Starting data update from Unraid API")
-        async with async_timeout.timeout(30):
-            try:
-                # Create task group for concurrent API calls
-                system_info_task = asyncio.create_task(self.api.get_system_info())
-                array_status_task = asyncio.create_task(self.api.get_array_status())
-                docker_status_task = asyncio.create_task(self.api.get_docker_status())
-                
-                # Wait for all tasks to complete
-                system_info, array_status, docker_status = await asyncio.gather(
+    async def _async_update_data(self) -> Dict[str, Any]:
+        """Fetch data from Unraid API."""
+        try:
+            async with async_timeout.timeout(60):
+                # Initialize data structure if it doesn't exist
+                if not self.data:
+                    self.data = {
+                        "system_info": {},
+                        "array_status": {},
+                        "docker_containers": {},
+                        "vms": {},
+                        "shares": {},
+                    }
+
+                # Fetch all data in parallel
+                system_info_task = self.api.get_system_info()
+                array_status_task = self.api.get_array_status()
+                docker_containers_task = self.api.get_docker_containers()
+                vms_task = self.api.get_vms()
+                shares_task = self.api.get_shares()
+
+                # Gather results
+                results = await asyncio.gather(
                     system_info_task,
                     array_status_task,
-                    docker_status_task,
+                    docker_containers_task,
+                    vms_task,
+                    shares_task,
+                    return_exceptions=True,
                 )
-                
-                LOGGER.debug("System info received with %d keys", 
-                           len(system_info) if isinstance(system_info, dict) else 0)
-                LOGGER.debug("Array status received with %d keys", 
-                           len(array_status) if isinstance(array_status, dict) else 0)
-                LOGGER.debug("Docker status received with %d containers", 
-                           len(docker_status) if isinstance(docker_status, list) else 0)
-                
-                LOGGER.debug("Data update completed successfully")
-                return {
-                    "system": system_info,
-                    "array": array_status,
-                    "docker": docker_status,
-                }
-            except TransportQueryError as err:
-                LOGGER.error("GraphQL query error: %s", err.errors, exc_info=True)
-                raise UpdateFailed(f"GraphQL query error: {err}")
-            except TransportServerError as err:
-                LOGGER.error("GraphQL server error: %s", err, exc_info=True)
-                raise UpdateFailed(f"GraphQL server error: {err}")
-            except asyncio.TimeoutError:
-                LOGGER.error("Timeout while fetching data from Unraid API")
-                raise UpdateFailed("Timeout while fetching data")
-            except Exception as err:
-                LOGGER.error("Unexpected error communicating with API: %s", err, exc_info=True)
-                raise UpdateFailed(f"Error communicating with API: {err}")
 
-    async def async_service_array_operation(self, operation: str) -> None:
-        """Execute array operation through API."""
-        LOGGER.info("Executing array operation: %s", operation)
-        try:
-            await self.api.control_array(operation)
-            await self.async_request_refresh()
-        except Exception as err:
-            LOGGER.error("Failed to execute array operation: %s", err)
-            raise
+                # Process results, handling any individual API errors
+                if not isinstance(results[0], Exception):
+                    self.data["system_info"] = results[0]
+                else:
+                    _LOGGER.error("Error fetching system info: %s", results[0])
 
-    async def async_service_docker_container(self, container_id: str, action: str) -> None:
-        """Execute Docker container action through API."""
-        LOGGER.info("Executing Docker container action: %s on %s", action, container_id)
-        try:
-            await self.api.control_docker_container(container_id, action)
-            # Allow time for the container to change state
-            await asyncio.sleep(2)
-            await self.async_request_refresh()
+                if not isinstance(results[1], Exception):
+                    self.data["array_status"] = results[1]
+                else:
+                    _LOGGER.error("Error fetching array status: %s", results[1])
+
+                if not isinstance(results[2], Exception):
+                    self.data["docker_containers"] = results[2]
+                else:
+                    _LOGGER.error("Error fetching docker containers: %s", results[2])
+
+                if not isinstance(results[3], Exception):
+                    self.data["vms"] = results[3]
+                else:
+                    _LOGGER.error("Error fetching VMs: %s", results[3])
+
+                if not isinstance(results[4], Exception):
+                    self.data["shares"] = results[4]
+                else:
+                    _LOGGER.error("Error fetching shares: %s", results[4])
+
+                return self.data
+
+        except UnraidApiError as err:
+            if err.status in ("401", "403"):
+                raise ConfigEntryAuthFailed from err
+            raise UpdateFailed(f"Error communicating with Unraid API: {err}")
         except Exception as err:
-            LOGGER.error("Failed to execute Docker container action: %s", err)
-            raise
+            raise UpdateFailed(f"Unexpected error: {err}")

@@ -1,0 +1,66 @@
+# Service definitions for Unraid integration
+
+start_array:
+  name: Start Array
+  description: Starts the Unraid array.
+  target:
+    entity:
+      integration: unraid
+
+stop_array:
+  name: Stop Array
+  description: Stops the Unraid array.
+  target:
+    entity:
+      integration: unraid
+
+start_parity_check:
+  name: Start Parity Check
+  description: Starts a parity check on the Unraid array.
+  target:
+    entity:
+      integration: unraid
+  fields:
+    correct:
+      name: Correct
+      description: Whether to correct parity errors during the check.
+      required: false
+      example: true
+      default: false
+      selector:
+        boolean:
+
+pause_parity_check:
+  name: Pause Parity Check
+  description: Pauses a running parity check.
+  target:
+    entity:
+      integration: unraid
+
+resume_parity_check:
+  name: Resume Parity Check
+  description: Resumes a paused parity check.
+  target:
+    entity:
+      integration: unraid
+
+cancel_parity_check:
+  name: Cancel Parity Check
+  description: Cancels a running parity check.
+  target:
+    entity:
+      integration: unraid
+
+reboot:
+  name: Reboot
+  description: Reboots the Unraid server.
+  target:
+    entity:
+      integration: unraid
+
+shutdown:
+  name: Shutdown
+  description: Shuts down the Unraid server.
+  target:
+    entity:
+      integration: unraid

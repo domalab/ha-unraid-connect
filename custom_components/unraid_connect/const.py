@@ -1,134 +1,106 @@
-"""
-Constants for the Unraid integration.
-"""
-from __future__ import annotations
+"""Constants for the Unraid integration."""
+from homeassistant.const import (
+    PERCENTAGE,
+    TEMP_CELSIUS,
+    CONF_HOST,
+    CONF_API_KEY,
+    CONF_NAME,
+    CONF_SCAN_INTERVAL,
+)
 
-import logging
-import sys
-from typing import Final
+DOMAIN = "unraid_connect"
+DEFAULT_NAME = "Unraid Connect"
+DEFAULT_SCAN_INTERVAL = 30
 
-# Integration domain
-DOMAIN: Final = "unraid_connect"
+# Config flow
+CONF_URL = "url"
+CONF_VERIFY_SSL = "verify_ssl"
 
-# Set up logging
-LOGGER = logging.getLogger(__name__)
+# API
+API_TIMEOUT = 10
+BASE_GRAPHQL_URL = "/graphql"
 
-# Configuration constants
-DEFAULT_SCAN_INTERVAL: Final = 30  # seconds
-CONFIG_VERSION: Final = 1
+# Array state values
+ARRAY_STATE_STARTED = "STARTED"
+ARRAY_STATE_STOPPED = "STOPPED"
+ARRAY_STATE_NEW_ARRAY = "NEW_ARRAY"
+ARRAY_STATE_RECON_DISK = "RECON_DISK"
+ARRAY_STATE_DISABLE_DISK = "DISABLE_DISK"
+ARRAY_STATE_SWAP_DSBL = "SWAP_DSBL"
+ARRAY_STATE_INVALID_EXPANSION = "INVALID_EXPANSION"
+ARRAY_STATE_PARITY_NOT_BIGGEST = "PARITY_NOT_BIGGEST"
+ARRAY_STATE_TOO_MANY_MISSING_DISKS = "TOO_MANY_MISSING_DISKS"
+ARRAY_STATE_NEW_DISK_TOO_SMALL = "NEW_DISK_TOO_SMALL"
+ARRAY_STATE_NO_DATA_DISKS = "NO_DATA_DISKS"
 
-# Error constants
-ERROR_CANNOT_CONNECT: Final = "cannot_connect"
-ERROR_INVALID_AUTH: Final = "invalid_auth"
-ERROR_UNKNOWN: Final = "unknown"
+# Docker container state values
+CONTAINER_STATE_RUNNING = "RUNNING"
+CONTAINER_STATE_EXITED = "EXITED"
 
-# Array states
-ARRAY_STATE_STARTED: Final = "started"
-ARRAY_STATE_STOPPED: Final = "stopped"
-ARRAY_STATE_MOUNTING: Final = "mounting"
-ARRAY_STATE_UNMOUNTING: Final = "unmounting"
+# Array disk types
+DISK_TYPE_DATA = "Data"
+DISK_TYPE_PARITY = "Parity"
+DISK_TYPE_CACHE = "Cache"
+DISK_TYPE_FLASH = "Flash"
 
-# Docker states
-DOCKER_STATE_RUNNING: Final = "running"
-DOCKER_STATE_EXITED: Final = "exited"
-DOCKER_STATE_PAUSED: Final = "paused"
-DOCKER_STATE_RESTARTING: Final = "restarting"
+# Array disk statuses
+DISK_STATUS_OK = "DISK_OK"
+DISK_STATUS_NP = "DISK_NP"
+DISK_STATUS_MISSING = "DISK_NP_MISSING"
+DISK_STATUS_INVALID = "DISK_INVALID"
+DISK_STATUS_WRONG = "DISK_WRONG"
+DISK_STATUS_DSBL = "DISK_DSBL"
+DISK_STATUS_NP_DSBL = "DISK_NP_DSBL"
+DISK_STATUS_DSBL_NEW = "DISK_DSBL_NEW"
+DISK_STATUS_NEW = "DISK_NEW"
 
-# Service constants
-SERVICE_ARRAY_OPERATIONS: Final = "array_operation"
-SERVICE_START_ARRAY: Final = "start_array"
-SERVICE_STOP_ARRAY: Final = "stop_array"
-SERVICE_DOCKER_CONTAINER: Final = "docker_container"
-SERVICE_START_CONTAINER: Final = "start_container"
-SERVICE_STOP_CONTAINER: Final = "stop_container"
-SERVICE_RESTART_CONTAINER: Final = "restart_container"
+# VM States
+VM_STATE_RUNNING = "RUNNING"
+VM_STATE_SHUTOFF = "SHUTOFF"
+VM_STATE_PAUSED = "PAUSED"
 
-# Array operations
-ARRAY_OPERATIONS: Final[list[str]] = [
-    "start",
-    "stop",
-    "pause",
-    "resume",
-    "check",
-    "cancel_check",
-]
+# Attributes
+ATTR_DISK_NAME = "disk_name"
+ATTR_DISK_TYPE = "disk_type"
+ATTR_DISK_SIZE = "disk_size"
+ATTR_DISK_FREE = "disk_free"
+ATTR_DISK_USED = "disk_used"
+ATTR_DISK_TEMP = "disk_temperature"
+ATTR_DISK_FS_TYPE = "disk_fs_type"
+ATTR_DISK_SERIAL = "disk_serial"
+ATTR_CONTAINER_IMAGE = "image"
+ATTR_CONTAINER_STATUS = "status"
+ATTR_VM_STATE = "state"
+ATTR_CPU_BRAND = "cpu_brand"
+ATTR_CPU_CORES = "cpu_cores"
+ATTR_CPU_THREADS = "cpu_threads"
+ATTR_UPTIME = "uptime"
+ATTR_ARRAY_STATUS = "array_status"
 
-# Icon mappings
-ICONS: Final[dict[str, str]] = {
-    "array": "mdi:harddisk",
-    "docker": "mdi:docker",
-    "system": "mdi:server",
-    "network": "mdi:ethernet",
-    "ups": "mdi:battery",
-    "cpu": "mdi:cpu-64-bit",
-    "memory": "mdi:memory",
-    "disk": "mdi:disk",
-    "parity": "mdi:harddisk-plus",
-    "temperature": "mdi:thermometer",
-}
+# Service names
+SERVICE_START_ARRAY = "start_array"
+SERVICE_STOP_ARRAY = "stop_array"
+SERVICE_START_PARITY_CHECK = "start_parity_check"
+SERVICE_PAUSE_PARITY_CHECK = "pause_parity_check"
+SERVICE_RESUME_PARITY_CHECK = "resume_parity_check"
+SERVICE_CANCEL_PARITY_CHECK = "cancel_parity_check"
+SERVICE_REBOOT = "reboot"
+SERVICE_SHUTDOWN = "shutdown"
 
-# Create a custom formatter that includes more details
-class DetailedFormatter(logging.Formatter):
-    """Formatter that includes more details for debugging."""
-    
-    def format(self, record):
-        """Format the specified record."""
-        record.levelname = f"[{record.levelname}]"
-        record.pathname = record.pathname.split("/")[-1]
-        return super().format(record)
+# Categories
+CATEGORY_ARRAY = "array"
+CATEGORY_SYSTEM = "system"
+CATEGORY_VM = "vm"
+CATEGORY_DOCKER = "docker"
 
-# Configure the logger
-def setup_logger():
-    """Set up detailed logging for the integration."""
-    # Remove any existing handlers
-    for handler in LOGGER.handlers[:]:
-        LOGGER.removeHandler(handler)
-    
-    handler = logging.StreamHandler(stream=sys.stdout)
-    fmt = DetailedFormatter(
-        '%(asctime)s %(levelname)-10s %(name)s (%(pathname)s:%(lineno)d): %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    handler.setFormatter(fmt)
-    LOGGER.addHandler(handler)
-    LOGGER.setLevel(logging.INFO)
-    
-    # Prevent log messages from being passed to the root logger
-    LOGGER.propagate = False
-    
-    # Log once that logging is configured
-    LOGGER.debug("Unraid integration logger configured")
-
-# Initialize logging
-setup_logger()
-
-# Translation keys
-ATTR_ACTION: Final = "action"
-ATTR_CONTAINER_ID: Final = "container_id"
-ATTR_OPERATION: Final = "operation"
-
-# Attribute keys
-ATTR_STATE: Final = "state"
-ATTR_STATUS: Final = "status"
-ATTR_IMAGE: Final = "image"
-ATTR_AUTO_START: Final = "auto_start"
-ATTR_CPU_USAGE: Final = "cpu_usage"
-ATTR_MEMORY_USAGE: Final = "memory_usage"
-ATTR_MEMORY_PERCENT: Final = "memory_percent"
-ATTR_NETWORK_RX: Final = "network_rx"
-ATTR_NETWORK_TX: Final = "network_tx"
-ATTR_BLOCK_READ: Final = "block_read"
-ATTR_BLOCK_WRITE: Final = "block_write"
-ATTR_PORTS: Final = "ports"
-ATTR_COMMAND: Final = "command"
-ATTR_CREATED: Final = "created"
-ATTR_TEMPERATURE: Final = "temperature"
-ATTR_SIZE: Final = "size"
-ATTR_INTERFACE: Final = "interface"
-ATTR_ROTATIONAL: Final = "rotational"
-ATTR_SERIAL: Final = "serial"
-ATTR_MODEL: Final = "model"
-ATTR_ERRORS: Final = "errors"
-ATTR_PROGRESS: Final = "progress"
-ATTR_SPEED: Final = "speed"
-ATTR_ETA: Final = "eta"
+# Icons
+ICON_SERVER = "mdi:server"
+ICON_DISK = "mdi:harddisk"
+ICON_ARRAY = "mdi:circle-slice-8"
+ICON_PARITY = "mdi:shield-check"
+ICON_CACHE = "mdi:flash"
+ICON_MEMORY = "mdi:memory"
+ICON_CPU = "mdi:cpu-64-bit"
+ICON_DOCKER = "mdi:docker"
+ICON_TEMPERATURE = "mdi:temperature-celsius"
+ICON_VM = "mdi:application"

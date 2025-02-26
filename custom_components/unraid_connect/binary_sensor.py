@@ -1,200 +1,314 @@
-"""
-Binary sensor platform for the Unraid integration.
-"""
-from __future__ import annotations
-
-from dataclasses import dataclass
-from typing import Any, Callable, Final
+"""Binary sensor platform for Unraid integration."""
+import logging
+from typing import Any, Dict, List, Optional
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
-    BinarySensorEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, LOGGER
+from .const import (
+    ARRAY_STATE_STARTED,
+    ATTR_CONTAINER_IMAGE,
+    ATTR_CONTAINER_STATUS,
+    ATTR_VM_STATE,
+    CONTAINER_STATE_RUNNING,
+    DOMAIN,
+    ICON_ARRAY,
+    ICON_DISK,
+    ICON_DOCKER,
+    ICON_VM,
+    VM_STATE_RUNNING,
+)
 from .coordinator import UnraidDataUpdateCoordinator
-from .entity import UnraidEntity, UnraidDockerEntity
-
-@dataclass
-class UnraidBinarySensorEntityDescription(BinarySensorEntityDescription):
-    """Class describing Unraid binary sensor entities."""
-    is_on_fn: Callable[[dict[str, Any]], bool] = lambda _: False
-    available_fn: Callable[[dict[str, Any]], bool] = lambda _: True
-    entity_category: EntityCategory | None = None
-    entity_registry_enabled_default: bool = True
-
-# Define all binary sensors with appropriate categories and default states
-ARRAY_BINARY_SENSORS: Final[tuple[UnraidBinarySensorEntityDescription, ...]] = (
-    UnraidBinarySensorEntityDescription(
-        key="array_protection",
-        translation_key="array_protection",
-        name="Array Protection",
-        device_class=BinarySensorDeviceClass.SAFETY,
-        is_on_fn=lambda data: data["array"].get("protected", False),
-        entity_category=EntityCategory.DIAGNOSTIC,
-    ),
-    UnraidBinarySensorEntityDescription(
-        key="array_started",
-        translation_key="array_started",
-        name="Array Started",
-        device_class=BinarySensorDeviceClass.RUNNING,
-        is_on_fn=lambda data: data["array"].get("started", False) or 
-                              data["array"].get("state", "") == "started",
-    ),
-    UnraidBinarySensorEntityDescription(
-        key="parity_check_running",
-        translation_key="parity_check_running",
-        name="Parity Check Running",
-        device_class=BinarySensorDeviceClass.RUNNING,
-        icon="mdi:harddisk-plus",
-        is_on_fn=lambda data: data["array"].get("parityCheckActive", False),
-    ),
+from .entity import (
+    UnraidArrayEntity,
+    UnraidDiskEntity,
+    UnraidDockerEntity,
+    UnraidSystemEntity,
+    UnraidVMEntity,
 )
 
+_LOGGER = logging.getLogger(__name__)
+
+
 async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    """Set up Unraid binary sensor based on a config entry."""
-    coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    
-    LOGGER.debug("Setting up Unraid binary sensors")
+    """Set up the Unraid binary sensors."""
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    name = hass.data[DOMAIN][entry.entry_id]["name"]
+
     entities = []
-    
-    # Add array-related binary sensors
-    for description in ARRAY_BINARY_SENSORS:
-        LOGGER.debug("Adding array binary sensor: %s", description.key)
-        entities.append(
-            UnraidBinarySensor(
-                coordinator=coordinator,
-                config_entry=entry,
-                description=description,
+
+    # Add system binary sensors
+    entities.append(UnraidOnlineBinarySensor(coordinator, name))
+
+    # Add array binary sensors
+    entities.append(UnraidArrayRunningBinarySensor(coordinator, name))
+
+    # Add disk binary sensors
+    array_data = coordinator.data.get("array_status", {}).get("array", {})
+
+    # Add data disks
+    data_disks = array_data.get("disks", [])
+    for disk in data_disks:
+        if disk.get("id") and disk.get("name"):
+            disk_id = disk.get("id")
+            disk_name = disk.get("name")
+            entities.append(
+                UnraidDiskHealthBinarySensor(coordinator, name, disk_id, disk_name, "Data")
             )
-        )
-    
-    # Add dynamic binary sensors for each Docker container
-    if coordinator.data and "docker" in coordinator.data:
-        for container in coordinator.data["docker"]:
-            if "names" in container and container["names"] and "id" in container:
-                container_name = container["names"][0] if isinstance(container["names"], list) else container["names"]
-                LOGGER.debug("Adding Docker container binary sensor: %s", container_name)
-                
-                entities.append(
-                    UnraidDockerContainerSensor(
-                        coordinator=coordinator,
-                        config_entry=entry,
-                        container_id=container["id"],
-                        container_name=container_name,
-                    )
-                )
-    
+
+    # Add parity disks
+    parity_disks = array_data.get("parities", [])
+    for disk in parity_disks:
+        if disk.get("id") and disk.get("name"):
+            disk_id = disk.get("id")
+            disk_name = disk.get("name")
+            entities.append(
+                UnraidDiskHealthBinarySensor(coordinator, name, disk_id, disk_name, "Parity")
+            )
+
+    # Add cache disks
+    cache_disks = array_data.get("caches", [])
+    for disk in cache_disks:
+        if disk.get("id") and disk.get("name"):
+            disk_id = disk.get("id")
+            disk_name = disk.get("name")
+            entities.append(
+                UnraidDiskHealthBinarySensor(coordinator, name, disk_id, disk_name, "Cache")
+            )
+
+    # Add docker container binary sensors
+    docker_data = coordinator.data.get("docker_containers", {}).get("dockerContainers", [])
+    for container in docker_data:
+        if container.get("id") and container.get("names"):
+            container_id = container.get("id")
+            container_name = container.get("names", [])[0] if container.get("names") else container_id
+            entities.append(
+                UnraidDockerContainerRunningBinarySensor(coordinator, name, container_id, container_name)
+            )
+
+    # Add VM binary sensors
+    vm_data = coordinator.data.get("vms", {}).get("vms", {}).get("domain", [])
+    for vm in vm_data:
+        if vm.get("uuid") and vm.get("name"):
+            vm_id = vm.get("uuid")
+            vm_name = vm.get("name")
+            entities.append(
+                UnraidVMRunningBinarySensor(coordinator, name, vm_id, vm_name)
+            )
+
     async_add_entities(entities)
-    LOGGER.info("Added %d Unraid binary sensors", len(entities))
 
-class UnraidBinarySensor(UnraidEntity, BinarySensorEntity):
-    """Binary sensor for Unraid integration."""
 
-    entity_description: UnraidBinarySensorEntityDescription
+class UnraidOnlineBinarySensor(UnraidSystemEntity, BinarySensorEntity):
+    """Binary sensor for Unraid online status."""
+
+    _attr_name = "Online"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if the server is online."""
+        try:
+            return self.coordinator.data.get("system_info", {}).get("online", False)
+        except (KeyError, AttributeError, TypeError):
+            return False
+
+
+class UnraidArrayRunningBinarySensor(UnraidArrayEntity, BinarySensorEntity):
+    """Binary sensor for Unraid array running status."""
+
+    _attr_name = "Array Running"
+    _attr_icon = ICON_ARRAY
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if the array is running."""
+        try:
+            state = self.coordinator.data.get("array_status", {}).get("array", {}).get("state")
+            return state == ARRAY_STATE_STARTED
+        except (KeyError, AttributeError, TypeError):
+            return False
+
+
+class UnraidDiskHealthBinarySensor(UnraidDiskEntity, BinarySensorEntity):
+    """Binary sensor for Unraid disk health."""
+
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_icon = ICON_DISK
 
     def __init__(
         self,
-        coordinator,
-        config_entry,
-        description: UnraidBinarySensorEntityDescription,
-    ) -> None:
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+        disk_id: str,
+        disk_name: str,
+        disk_type: str,
+    ):
         """Initialize the binary sensor."""
-        super().__init__(coordinator, config_entry, description)
-        
+        super().__init__(coordinator, server_name, "health", disk_id, disk_type)
+        self._disk_name = disk_name
+        self._attr_name = f"{disk_name} Health"
+
     @property
-    def is_on(self) -> bool | None:
-        """Return true if the binary sensor is on."""
+    def is_on(self) -> bool:
+        """Return true if the disk has a problem."""
         try:
-            return self.entity_description.is_on_fn(self.coordinator.data)
-        except (KeyError, TypeError) as err:
-            LOGGER.warning("Error getting state for %s: %s", 
-                          self.entity_id, err)
-            return None
+            array_data = self.coordinator.data.get("array_status", {}).get("array", {})
             
+            # Look in different disk arrays based on type
+            if self._disk_type == "Parity":
+                disks = array_data.get("parities", [])
+            elif self._disk_type == "Cache":
+                disks = array_data.get("caches", [])
+            else:
+                disks = array_data.get("disks", [])
+                
+            for disk in disks:
+                if disk.get("id") == self._disk_id:
+                    # Return True (problem) if status is not "DISK_OK"
+                    return disk.get("status") != "DISK_OK"
+            
+            # Default to problem if disk not found
+            return True
+        except (KeyError, AttributeError, TypeError):
+            return True
+
     @property
-    def available(self) -> bool:
-        """Return True if entity is available."""
-        if not super().available:
-            return False
-            
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
         try:
-            return self.entity_description.available_fn(self.coordinator.data)
-        except (KeyError, TypeError):
-            return False
+            array_data = self.coordinator.data.get("array_status", {}).get("array", {})
+            
+            # Look in different disk arrays based on type
+            if self._disk_type == "Parity":
+                disks = array_data.get("parities", [])
+            elif self._disk_type == "Cache":
+                disks = array_data.get("caches", [])
+            else:
+                disks = array_data.get("disks", [])
+                
+            for disk in disks:
+                if disk.get("id") == self._disk_id:
+                    return {
+                        "name": disk.get("name"),
+                        "type": self._disk_type,
+                        "status": disk.get("status"),
+                        "device": disk.get("device"),
+                        "size": disk.get("size"),
+                        "numErrors": disk.get("numErrors"),
+                    }
+            
+            return {}
+        except (KeyError, AttributeError, TypeError):
+            return {}
 
 
-class UnraidDockerContainerSensor(UnraidDockerEntity, BinarySensorEntity):
-    """Binary sensor for an Unraid Docker container."""
+class UnraidDockerContainerRunningBinarySensor(UnraidDockerEntity, BinarySensorEntity):
+    """Binary sensor for Unraid Docker container running status."""
+
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+    _attr_icon = ICON_DOCKER
 
     def __init__(
         self,
-        coordinator,
-        config_entry,
-        container_id,
-        container_name,
-    ) -> None:
-        """Initialize the Docker container binary sensor."""
-        super().__init__(coordinator, config_entry, container_id, container_name)
-        self._attr_device_class = BinarySensorDeviceClass.RUNNING
-        self._attr_entity_registry_enabled_default = True
-        LOGGER.debug("Initialized Docker container sensor: %s", self._attr_unique_id)
-        
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+        container_id: str,
+        container_name: str,
+    ):
+        """Initialize the binary sensor."""
+        super().__init__(coordinator, server_name, "running", container_id)
+        self._container_name = container_name
+        self._attr_name = f"Docker {container_name} Running"
+
     @property
-    def is_on(self) -> bool | None:
+    def is_on(self) -> bool:
         """Return true if the container is running."""
-        container = self._get_container_data()
-        if container is None:
-            return None
+        try:
+            containers = self.coordinator.data.get("docker_containers", {}).get("dockerContainers", [])
             
-        return container.get("state") == "running"
+            for container in containers:
+                if container.get("id") == self._container_id:
+                    return container.get("state") == CONTAINER_STATE_RUNNING
             
+            return False
+        except (KeyError, AttributeError, TypeError):
+            return False
+
     @property
-    def extra_state_attributes(self) -> dict[str, Any]:
+    def extra_state_attributes(self) -> Dict[str, Any]:
         """Return the state attributes."""
-        attrs = {}
-        
-        container = self._get_container_data()
-        if container is None:
-            return attrs
+        try:
+            containers = self.coordinator.data.get("docker_containers", {}).get("dockerContainers", [])
             
-        attrs["image"] = container.get("image")
-        attrs["status"] = container.get("status")
-        attrs["auto_start"] = container.get("autoStart", False)
-        
-        # Add performance metrics if available
-        if "cpuUsage" in container:
-            attrs["cpu_usage"] = container["cpuUsage"]
-        if "memUsage" in container:
-            attrs["memory_usage"] = container["memUsage"]
-        if "memPercent" in container:
-            attrs["memory_percent"] = container["memPercent"]
-        
-        # Add network IO if available
-        if "netIO" in container and container["netIO"]:
-            if "rx" in container["netIO"]:
-                attrs["network_rx"] = container["netIO"]["rx"]
-            if "tx" in container["netIO"]:
-                attrs["network_tx"] = container["netIO"]["tx"]
-        
-        # Add block IO if available
-        if "blockIO" in container and container["blockIO"]:
-            if "read" in container["blockIO"]:
-                attrs["block_read"] = container["blockIO"]["read"]
-            if "write" in container["blockIO"]:
-                attrs["block_write"] = container["blockIO"]["write"]
-        
-        # Add ports if available
-        if "ports" in container and container["ports"]:
-            attrs["ports"] = container["ports"]
+            for container in containers:
+                if container.get("id") == self._container_id:
+                    return {
+                        "name": self._container_name,
+                        ATTR_CONTAINER_IMAGE: container.get("image"),
+                        ATTR_CONTAINER_STATUS: container.get("status"),
+                        "created": container.get("created"),
+                        "auto_start": container.get("autoStart"),
+                    }
             
-        return attrs
+            return {}
+        except (KeyError, AttributeError, TypeError):
+            return {}
+
+
+class UnraidVMRunningBinarySensor(UnraidVMEntity, BinarySensorEntity):
+    """Binary sensor for Unraid VM running status."""
+
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+    _attr_icon = ICON_VM
+
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+        vm_id: str,
+        vm_name: str,
+    ):
+        """Initialize the binary sensor."""
+        super().__init__(coordinator, server_name, "running", vm_id)
+        self._vm_name = vm_name
+        self._attr_name = f"VM {vm_name} Running"
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if the VM is running."""
+        try:
+            vms = self.coordinator.data.get("vms", {}).get("vms", {}).get("domain", [])
+            
+            for vm in vms:
+                if vm.get("uuid") == self._vm_id:
+                    return vm.get("state") == VM_STATE_RUNNING
+            
+            return False
+        except (KeyError, AttributeError, TypeError):
+            return False
+
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
+        try:
+            vms = self.coordinator.data.get("vms", {}).get("vms", {}).get("domain", [])
+            
+            for vm in vms:
+                if vm.get("uuid") == self._vm_id:
+                    return {
+                        "name": self._vm_name,
+                        ATTR_VM_STATE: vm.get("state"),
+                    }
+            
+            return {}
+        except (KeyError, AttributeError, TypeError):
+            return {}

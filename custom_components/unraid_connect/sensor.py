@@ -1,576 +1,546 @@
-"""
-Sensor platform for the Unraid integration.
-"""
-from __future__ import annotations
-
-from dataclasses import dataclass
-from typing import Any, Callable, Final
+"""Sensor platform for Unraid integration."""
+import logging
+from typing import Any, Dict, List, Optional
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
-    SensorEntityDescription,
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
-    UnitOfTemperature,
+    TEMP_CELSIUS,
+    CONF_HOST,
+    UnitOfDataSize,
     UnitOfInformation,
-    UnitOfTime,
+    UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.typing import StateType
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, LOGGER
+from .const import (
+    ARRAY_STATE_STARTED,
+    ATTR_CPU_BRAND,
+    ATTR_CPU_CORES,
+    ATTR_CPU_THREADS,
+    ATTR_DISK_FREE,
+    ATTR_DISK_FS_TYPE,
+    ATTR_DISK_NAME,
+    ATTR_DISK_SERIAL,
+    ATTR_DISK_SIZE,
+    ATTR_DISK_TEMP,
+    ATTR_DISK_TYPE,
+    ATTR_DISK_USED,
+    ATTR_CONTAINER_IMAGE,
+    ATTR_CONTAINER_STATUS,
+    ATTR_UPTIME,
+    DOMAIN,
+    ICON_ARRAY,
+    ICON_CPU,
+    ICON_DISK,
+    ICON_MEMORY,
+    ICON_TEMPERATURE,
+)
 from .coordinator import UnraidDataUpdateCoordinator
-from .entity import UnraidEntity, UnraidDockerEntity
-
-@dataclass
-class UnraidSensorEntityDescription(SensorEntityDescription):
-    """Class describing Unraid sensor entities."""
-    value_fn: Callable[[dict[str, Any]], StateType] = lambda _: None
-    available_fn: Callable[[dict[str, Any]], bool] = lambda _: True
-    entity_category: EntityCategory | None = None
-    entity_registry_enabled_default: bool = True
-
-
-SYSTEM_SENSORS: Final[tuple[UnraidSensorEntityDescription, ...]] = (
-    UnraidSensorEntityDescription(
-        key="cpu_cores",
-        translation_key="cpu_cores",
-        name="CPU Cores",
-        icon="mdi:cpu-64-bit",
-        value_fn=lambda data: data["system"]["cpu"]["cores"],
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    UnraidSensorEntityDescription(
-        key="cpu_threads",
-        translation_key="cpu_threads",
-        name="CPU Threads",
-        icon="mdi:cpu-64-bit",
-        value_fn=lambda data: data["system"]["cpu"]["threads"],
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    UnraidSensorEntityDescription(
-        key="cpu_temperature",
-        translation_key="cpu_temperature",
-        name="CPU Temperature",
-        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
-        device_class=SensorDeviceClass.TEMPERATURE,
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda data: data["system"]["cpu"].get("temperature"),
-    ),
-    UnraidSensorEntityDescription(
-        key="cpu_load",
-        translation_key="cpu_load",
-        name="CPU Load",
-        native_unit_of_measurement=PERCENTAGE,
-        device_class=SensorDeviceClass.BATTERY,
-        state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:cpu-64-bit",
-        value_fn=lambda data: (
-            round(data["system"]["cpu"]["load"]["currentLoad"], 1)
-            if "load" in data["system"]["cpu"] and "currentLoad" in data["system"]["cpu"]["load"]
-            else None
-        ),
-    ),
-    UnraidSensorEntityDescription(
-        key="memory_used_percent",
-        translation_key="memory_used_percent",
-        name="Memory Usage",
-        native_unit_of_measurement=PERCENTAGE,
-        device_class=SensorDeviceClass.BATTERY,
-        state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:memory",
-        value_fn=lambda data: (
-            round(data["system"]["memory"]["used"] / data["system"]["memory"]["total"] * 100, 1)
-            if "memory" in data["system"] 
-            and "used" in data["system"]["memory"] 
-            and "total" in data["system"]["memory"]
-            and data["system"]["memory"]["total"] > 0
-            else None
-        ),
-    ),
-    UnraidSensorEntityDescription(
-        key="memory_available",
-        translation_key="memory_available",
-        name="Memory Available",
-        native_unit_of_measurement=UnitOfInformation.GIGABYTES,
-        device_class=SensorDeviceClass.DATA_SIZE,
-        state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:memory",
-        value_fn=lambda data: (
-            round(data["system"]["memory"]["available"] / 1024 / 1024 / 1024, 2)
-            if "memory" in data["system"] and "available" in data["system"]["memory"]
-            else None
-        ),
-        entity_category=EntityCategory.DIAGNOSTIC,
-    ),
-    UnraidSensorEntityDescription(
-        key="uptime",
-        translation_key="uptime",
-        name="Uptime",
-        device_class=SensorDeviceClass.DURATION,
-        native_unit_of_measurement=UnitOfTime.SECONDS,
-        value_fn=lambda data: data["system"]["os"]["uptime"],
-        entity_category=EntityCategory.DIAGNOSTIC,
-    ),
+from .entity import (
+    UnraidArrayEntity,
+    UnraidDiskEntity,
+    UnraidShareEntity,
+    UnraidSystemEntity,
 )
 
-ARRAY_SENSORS: Final[tuple[UnraidSensorEntityDescription, ...]] = (
-    UnraidSensorEntityDescription(
-        key="array_state",
-        translation_key="array_state",
-        name="Array State",
-        icon="mdi:harddisk",
-        value_fn=lambda data: data["array"]["state"],
-    ),
-    UnraidSensorEntityDescription(
-        key="array_capacity",
-        translation_key="array_capacity",
-        name="Array Capacity",
-        native_unit_of_measurement=PERCENTAGE,
-        device_class=SensorDeviceClass.BATTERY,
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda data: (
-            round(
-                (data["array"]["capacity"]["disks"]["used"] /
-                 data["array"]["capacity"]["disks"]["total"]) * 100,
-                1
-            )
-            if "capacity" in data["array"] 
-            and "disks" in data["array"]["capacity"]
-            and "used" in data["array"]["capacity"]["disks"]
-            and "total" in data["array"]["capacity"]["disks"]
-            and data["array"]["capacity"]["disks"]["total"] > 0
-            else None
-        ),
-    ),
-    UnraidSensorEntityDescription(
-        key="array_size",
-        translation_key="array_size",
-        name="Array Size",
-        native_unit_of_measurement=UnitOfInformation.TERABYTES,
-        device_class=SensorDeviceClass.DATA_SIZE,
-        state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:harddisk",
-        value_fn=lambda data: (
-            round(data["array"]["capacity"]["disks"]["total"] / 1024 / 1024 / 1024 / 1024, 2)
-            if "capacity" in data["array"] 
-            and "disks" in data["array"]["capacity"]
-            and "total" in data["array"]["capacity"]["disks"]
-            else None
-        ),
-        entity_category=EntityCategory.DIAGNOSTIC,
-    ),
-    UnraidSensorEntityDescription(
-        key="array_used",
-        translation_key="array_used",
-        name="Array Used",
-        native_unit_of_measurement=UnitOfInformation.TERABYTES,
-        device_class=SensorDeviceClass.DATA_SIZE,
-        state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:harddisk",
-        value_fn=lambda data: (
-            round(data["array"]["capacity"]["disks"]["used"] / 1024 / 1024 / 1024 / 1024, 2)
-            if "capacity" in data["array"] 
-            and "disks" in data["array"]["capacity"]
-            and "used" in data["array"]["capacity"]["disks"]
-            else None
-        ),
-        entity_category=EntityCategory.DIAGNOSTIC,
-    ),
-    UnraidSensorEntityDescription(
-        key="array_free",
-        translation_key="array_free",
-        name="Array Free",
-        native_unit_of_measurement=UnitOfInformation.TERABYTES,
-        device_class=SensorDeviceClass.DATA_SIZE,
-        state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:harddisk",
-        value_fn=lambda data: (
-            round(data["array"]["capacity"]["disks"]["free"] / 1024 / 1024 / 1024 / 1024, 2)
-            if "capacity" in data["array"] 
-            and "disks" in data["array"]["capacity"]
-            and "free" in data["array"]["capacity"]["disks"]
-            else None
-        ),
-    ),
-    UnraidSensorEntityDescription(
-        key="parity_check_progress",
-        translation_key="parity_check_progress",
-        name="Parity Check Progress",
-        native_unit_of_measurement=PERCENTAGE,
-        device_class=SensorDeviceClass.BATTERY,
-        state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:harddisk-plus",
-        value_fn=lambda data: (
-            data["array"]["parityCheckProgress"]
-            if data["array"].get("parityCheckActive") and "parityCheckProgress" in data["array"]
-            else None
-        ),
-        available_fn=lambda data: data["array"].get("parityCheckActive", False),
-    ),
-    UnraidSensorEntityDescription(
-        key="parity_check_speed",
-        translation_key="parity_check_speed",
-        name="Parity Check Speed",
-        native_unit_of_measurement=UnitOfInformation.MEGABYTES_PER_SECOND,
-        device_class=SensorDeviceClass.DATA_RATE,
-        state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:harddisk-plus",
-        value_fn=lambda data: (
-            data["array"]["parityCheckSpeed"]
-            if data["array"].get("parityCheckActive") and "parityCheckSpeed" in data["array"]
-            else None
-        ),
-        available_fn=lambda data: data["array"].get("parityCheckActive", False),
-        entity_category=EntityCategory.DIAGNOSTIC,
-    ),
-    UnraidSensorEntityDescription(
-        key="parity_check_eta",
-        translation_key="parity_check_eta",
-        name="Parity Check ETA",
-        native_unit_of_measurement=UnitOfTime.SECONDS,
-        device_class=SensorDeviceClass.DURATION,
-        icon="mdi:timer-outline",
-        value_fn=lambda data: (
-            data["array"]["parityCheckTotalSec"] - data["array"]["parityCheckElapsedSec"]
-            if (data["array"].get("parityCheckActive") and 
-                "parityCheckTotalSec" in data["array"] and
-                "parityCheckElapsedSec" in data["array"] and
-                data["array"]["parityCheckTotalSec"] > data["array"]["parityCheckElapsedSec"])
-            else None
-        ),
-        available_fn=lambda data: data["array"].get("parityCheckActive", False),
-    ),
-)
+_LOGGER = logging.getLogger(__name__)
+
 
 async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    """Set up Unraid sensor based on a config entry."""
-    coordinator: UnraidDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    
-    LOGGER.debug("Setting up Unraid sensors")
+    """Set up the Unraid sensors."""
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    name = hass.data[DOMAIN][entry.entry_id]["name"]
+    host = entry.data[CONF_HOST]
+
     entities = []
-    
+
     # Add system sensors
-    for description in SYSTEM_SENSORS:
-        LOGGER.debug("Adding system sensor: %s", description.key)
-        entities.append(
-            UnraidSensor(
-                coordinator=coordinator,
-                config_entry=entry,
-                description=description,
-            )
-        )
+    entities.append(UnraidSystemStateSensor(coordinator, name))
+    entities.append(UnraidCpuTempSensor(coordinator, name))
+    entities.append(UnraidMemoryUsageSensor(coordinator, name))
+    entities.append(UnraidUptimeSensor(coordinator, name))
 
     # Add array sensors
-    for description in ARRAY_SENSORS:
-        LOGGER.debug("Adding array sensor: %s", description.key)
-        entities.append(
-            UnraidSensor(
-                coordinator=coordinator,
-                config_entry=entry,
-                description=description,
+    entities.append(UnraidArrayStateSensor(coordinator, name))
+    entities.append(UnraidArraySpaceUsedSensor(coordinator, name))
+    entities.append(UnraidArraySpaceFreeSensor(coordinator, name))
+    entities.append(UnraidArraySpaceTotalSensor(coordinator, name))
+
+    # Get array data for disks
+    array_data = coordinator.data.get("array_status", {}).get("array", {})
+
+    # Add parity disks
+    parity_disks = array_data.get("parities", [])
+    for disk in parity_disks:
+        if disk.get("id") and disk.get("name"):
+            disk_id = disk.get("id")
+            disk_name = disk.get("name")
+            entities.append(
+                UnraidDiskTempSensor(coordinator, name, disk_id, disk_name, "Parity")
             )
-        )
-        
-    # Add disk temperature sensors
-    if coordinator.data and "array" in coordinator.data and "disks" in coordinator.data["array"]:
-        for disk in coordinator.data["array"]["disks"]:
-            if "name" in disk and "temp" in disk and disk.get("name"):
-                disk_name = disk["name"]
-                LOGGER.debug("Adding disk temperature sensor for %s", disk_name)
-                
-                entities.append(
-                    UnraidDiskTempSensor(
-                        coordinator=coordinator,
-                        config_entry=entry,
-                        disk_id=disk.get("id", disk_name),
-                        disk_name=disk_name,
-                    )
-                )
-    
-    # Add Docker container usage sensors
-    if coordinator.data and "docker" in coordinator.data:
-        for container in coordinator.data["docker"]:
-            if "names" in container and container["names"] and "id" in container:
-                container_name = container["names"][0] if isinstance(container["names"], list) else container["names"]
-                
-                # Only add detailed sensors for containers that report usage metrics
-                if "cpuUsage" in container or "memUsage" in container:
-                    LOGGER.debug("Adding Docker container usage sensors for %s", container_name)
-                    
-                    if "cpuUsage" in container:
-                        entities.append(
-                            UnraidDockerCpuSensor(
-                                coordinator=coordinator,
-                                config_entry=entry,
-                                container_id=container["id"],
-                                container_name=container_name,
-                            )
-                        )
-                        
-                    if "memUsage" in container:
-                        entities.append(
-                            UnraidDockerMemorySensor(
-                                coordinator=coordinator,
-                                config_entry=entry,
-                                container_id=container["id"],
-                                container_name=container_name,
-                            )
-                        )
-                        
-                    if "memPercent" in container:
-                        entities.append(
-                            UnraidDockerMemoryPercentSensor(
-                                coordinator=coordinator,
-                                config_entry=entry,
-                                container_id=container["id"],
-                                container_name=container_name,
-                            )
-                        )
-    
+
+    # Add data disks
+    data_disks = array_data.get("disks", [])
+    for disk in data_disks:
+        if disk.get("id") and disk.get("name"):
+            disk_id = disk.get("id")
+            disk_name = disk.get("name")
+            entities.append(
+                UnraidDiskTempSensor(coordinator, name, disk_id, disk_name, "Data")
+            )
+            entities.append(
+                UnraidDiskSpaceUsedSensor(coordinator, name, disk_id, disk_name)
+            )
+            entities.append(
+                UnraidDiskSpaceFreeSensor(coordinator, name, disk_id, disk_name)
+            )
+
+    # Add cache disks
+    cache_disks = array_data.get("caches", [])
+    for disk in cache_disks:
+        if disk.get("id") and disk.get("name"):
+            disk_id = disk.get("id")
+            disk_name = disk.get("name")
+            entities.append(
+                UnraidDiskTempSensor(coordinator, name, disk_id, disk_name, "Cache")
+            )
+
+    # Add shares
+    shares_data = coordinator.data.get("shares", {}).get("shares", [])
+    for share in shares_data:
+        if share.get("name"):
+            share_name = share.get("name")
+            entities.append(UnraidShareSpaceUsedSensor(coordinator, name, share_name))
+            entities.append(UnraidShareSpaceFreeSensor(coordinator, name, share_name))
+
     async_add_entities(entities)
-    LOGGER.info("Added %d Unraid sensors", len(entities))
 
-class UnraidSensor(UnraidEntity, SensorEntity):
-    """Sensor for Unraid integration."""
 
-    entity_description: UnraidSensorEntityDescription
+class UnraidSystemStateSensor(UnraidSystemEntity, SensorEntity):
+    """Sensor for Unraid system state."""
 
-    def __init__(
-        self,
-        coordinator,
-        config_entry,
-        description: UnraidSensorEntityDescription,
-    ) -> None:
-        """Initialize the sensor."""
-        super().__init__(coordinator, config_entry, description)
-        
+    _attr_name = "System State"
+    _attr_icon = ICON_CPU
+
     @property
-    def native_value(self) -> StateType:
+    def native_value(self) -> str:
+        """Return the state of the sensor."""
+        online = self.coordinator.data.get("system_info", {}).get("online", False)
+        return "Online" if online else "Offline"
+
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
+        try:
+            info = self.coordinator.data.get("system_info", {}).get("info", {})
+            cpu_info = info.get("cpu", {})
+            os_info = info.get("os", {})
+            
+            return {
+                ATTR_CPU_BRAND: cpu_info.get("brand", "Unknown"),
+                ATTR_CPU_CORES: cpu_info.get("cores", 0),
+                ATTR_CPU_THREADS: cpu_info.get("threads", 0),
+                "os_platform": os_info.get("platform", "Unknown"),
+                "os_distro": os_info.get("distro", "Unknown"),
+                "os_release": os_info.get("release", "Unknown"),
+                "unraid_version": info.get("versions", {}).get("unraid", "Unknown"),
+            }
+        except (KeyError, AttributeError, TypeError):
+            return {}
+
+
+class UnraidCpuTempSensor(UnraidSystemEntity, SensorEntity):
+    """Sensor for Unraid CPU temperature."""
+
+    _attr_name = "CPU Temperature"
+    _attr_icon = ICON_TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def native_value(self) -> Optional[float]:
         """Return the state of the sensor."""
         try:
-            return self.entity_description.value_fn(self.coordinator.data)
-        except (KeyError, TypeError) as err:
-            LOGGER.warning("Error getting state for %s: %s", 
-                          self.entity_id, err)
+            cpu_info = self.coordinator.data.get("system_info", {}).get("info", {}).get("cpu", {})
+            # Temperature might be in different formats depending on the system
+            # This is just a placeholder - you would need to adjust based on actual data structure
+            return cpu_info.get("temperature")
+        except (KeyError, AttributeError, TypeError):
             return None
-            
+
+
+class UnraidMemoryUsageSensor(UnraidSystemEntity, SensorEntity):
+    """Sensor for Unraid memory usage."""
+
+    _attr_name = "Memory Usage"
+    _attr_icon = ICON_MEMORY
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
     @property
-    def available(self) -> bool:
-        """Return True if entity is available."""
-        if not super().available:
-            return False
-            
+    def native_value(self) -> Optional[float]:
+        """Return the state of the sensor."""
         try:
-            return self.entity_description.available_fn(self.coordinator.data)
-        except (KeyError, TypeError):
-            return False
-
-
-class UnraidDiskTempSensor(UnraidEntity, SensorEntity):
-    """Temperature sensor for an Unraid disk."""
-
-    def __init__(
-        self,
-        coordinator,
-        config_entry,
-        disk_id,
-        disk_name,
-    ) -> None:
-        """Initialize the disk temperature sensor."""
-        super().__init__(coordinator, config_entry)
-        self._disk_id = disk_id
-        self._disk_name = disk_name
-        self._attr_unique_id = f"{config_entry.entry_id}_disk_{disk_id}_temp"
-        self._attr_name = f"Disk {disk_name} Temperature"
-        self._attr_device_class = SensorDeviceClass.TEMPERATURE
-        self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_has_entity_name = True
-        LOGGER.debug("Initialized disk temperature sensor: %s", self._attr_unique_id)
-        
-    @property
-    def native_value(self) -> StateType:
-        """Return the temperature of the disk."""
-        try:
-            if not self.coordinator.data or "array" not in self.coordinator.data or "disks" not in self.coordinator.data["array"]:
-                return None
-                
-            for disk in self.coordinator.data["array"]["disks"]:
-                if ((disk.get("id") == self._disk_id or disk.get("name") == self._disk_name) and 
-                    "temp" in disk):
-                    return disk["temp"]
-                    
-            return None
-                
-        except Exception as err:
-            LOGGER.warning("Error getting disk temperature: %s", err)
-            return None
+            memory = self.coordinator.data.get("system_info", {}).get("info", {}).get("memory", {})
+            total = memory.get("total", 0)
+            used = memory.get("used", 0)
             
+            if total > 0:
+                return round((used / total) * 100, 2)
+            return 0
+        except (KeyError, AttributeError, TypeError, ZeroDivisionError):
+            return None
+
     @property
-    def extra_state_attributes(self) -> dict[str, Any]:
+    def extra_state_attributes(self) -> Dict[str, Any]:
         """Return the state attributes."""
-        attrs = {}
-        
         try:
-            if not self.coordinator.data or "array" not in self.coordinator.data or "disks" not in self.coordinator.data["array"]:
-                return attrs
-                
-            for disk in self.coordinator.data["array"]["disks"]:
-                if disk.get("id") == self._disk_id or disk.get("name") == self._disk_name:
-                    attrs["status"] = disk.get("status")
-                    attrs["size"] = disk.get("size")
-                    attrs["interface"] = disk.get("interface")
-                    attrs["rotational"] = disk.get("rotational", True)
-                    attrs["serial"] = disk.get("serial")
-                    attrs["model"] = disk.get("model")
-                    
-                    if "numErrors" in disk:
-                        attrs["errors"] = disk["numErrors"]
-                    
-                    break
-                    
-        except Exception as err:
-            LOGGER.warning("Error getting disk attributes: %s", err)
+            memory = self.coordinator.data.get("system_info", {}).get("info", {}).get("memory", {})
             
-        return attrs
+            return {
+                "total": self._format_memory_size(memory.get("total", 0)),
+                "used": self._format_memory_size(memory.get("used", 0)),
+                "free": self._format_memory_size(memory.get("free", 0)),
+            }
+        except (KeyError, AttributeError, TypeError):
+            return {}
+            
+    def _format_memory_size(self, size_bytes: int) -> str:
+        """Format memory size to appropriate unit."""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 ** 2:
+            return f"{size_bytes / 1024:.2f} KB"
+        elif size_bytes < 1024 ** 3:
+            return f"{size_bytes / (1024 ** 2):.2f} MB"
+        else:
+            return f"{size_bytes / (1024 ** 3):.2f} GB"
 
 
-class UnraidDockerCpuSensor(UnraidDockerEntity, SensorEntity):
-    """CPU usage sensor for an Unraid Docker container."""
+class UnraidUptimeSensor(UnraidSystemEntity, SensorEntity):
+    """Sensor for Unraid uptime."""
+
+    _attr_name = "Uptime"
+    _attr_icon = ICON_SERVER
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    @property
+    def native_value(self) -> Optional[str]:
+        """Return the state of the sensor."""
+        try:
+            uptime = self.coordinator.data.get("system_info", {}).get("info", {}).get("os", {}).get("uptime")
+            return uptime
+        except (KeyError, AttributeError, TypeError):
+            return None
+
+
+class UnraidArrayStateSensor(UnraidArrayEntity, SensorEntity):
+    """Sensor for Unraid array state."""
+
+    _attr_name = "Array State"
+    _attr_icon = ICON_ARRAY
+
+    @property
+    def native_value(self) -> str:
+        """Return the state of the sensor."""
+        try:
+            array_state = self.coordinator.data.get("array_status", {}).get("array", {}).get("state", "Unknown")
+            return array_state
+        except (KeyError, AttributeError, TypeError):
+            return "Unknown"
+
+
+class UnraidArraySpaceUsedSensor(UnraidArrayEntity, SensorEntity):
+    """Sensor for Unraid array space used."""
+
+    _attr_name = "Array Space Used"
+    _attr_icon = ICON_DISK
+    _attr_native_unit_of_measurement = UnitOfInformation.KIBIBYTES
+    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def native_value(self) -> Optional[int]:
+        """Return the state of the sensor."""
+        try:
+            used = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {}).get("disks", {}).get("used", "0")
+            return int(used) if used else 0
+        except (KeyError, AttributeError, TypeError, ValueError):
+            return None
+
+
+class UnraidArraySpaceFreeSensor(UnraidArrayEntity, SensorEntity):
+    """Sensor for Unraid array space free."""
+
+    _attr_name = "Array Space Free"
+    _attr_icon = ICON_DISK
+    _attr_native_unit_of_measurement = UnitOfInformation.KIBIBYTES
+    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def native_value(self) -> Optional[int]:
+        """Return the state of the sensor."""
+        try:
+            free = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {}).get("disks", {}).get("free", "0")
+            return int(free) if free else 0
+        except (KeyError, AttributeError, TypeError, ValueError):
+            return None
+
+
+class UnraidArraySpaceTotalSensor(UnraidArrayEntity, SensorEntity):
+    """Sensor for Unraid array space total."""
+
+    _attr_name = "Array Space Total"
+    _attr_icon = ICON_DISK
+    _attr_native_unit_of_measurement = UnitOfInformation.KIBIBYTES
+    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def native_value(self) -> Optional[int]:
+        """Return the state of the sensor."""
+        try:
+            total = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {}).get("disks", {}).get("total", "0")
+            return int(total) if total else 0
+        except (KeyError, AttributeError, TypeError, ValueError):
+            return None
+
+
+class UnraidDiskTempSensor(UnraidDiskEntity, SensorEntity):
+    """Sensor for Unraid disk temperature."""
+
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = ICON_TEMPERATURE
 
     def __init__(
         self,
-        coordinator,
-        config_entry,
-        container_id,
-        container_name,
-    ) -> None:
-        """Initialize the Docker CPU usage sensor."""
-        super().__init__(coordinator, config_entry, container_id, container_name)
-        self._attr_unique_id = f"{config_entry.entry_id}_docker_{container_id}_cpu"
-        self._attr_name = f"{container_name} CPU Usage"
-        self._attr_device_class = SensorDeviceClass.BATTERY
-        self._attr_native_unit_of_measurement = PERCENTAGE
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        self._attr_icon = "mdi:cpu-64-bit"
-        LOGGER.debug("Initialized Docker CPU usage sensor: %s", self._attr_unique_id)
-        
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+        disk_id: str,
+        disk_name: str,
+        disk_type: str,
+    ):
+        """Initialize the sensor."""
+        super().__init__(coordinator, server_name, "temperature", disk_id, disk_type)
+        self._disk_name = disk_name
+        self._attr_name = f"{disk_name} Temperature"
+
     @property
-    def native_value(self) -> StateType:
-        """Return the CPU usage of the container."""
-        container = self._get_container_data()
-        if container is None or "cpuUsage" not in container:
-            return None
+    def native_value(self) -> Optional[int]:
+        """Return the state of the sensor."""
+        try:
+            array_data = self.coordinator.data.get("array_status", {}).get("array", {})
             
-        # Some implementations return this as a string percentage
-        if isinstance(container["cpuUsage"], str) and container["cpuUsage"].endswith('%'):
-            try:
-                return float(container["cpuUsage"].rstrip('%'))
-            except (ValueError, TypeError):
-                return None
+            # Look in different disk arrays based on type
+            if self._disk_type == "Parity":
+                disks = array_data.get("parities", [])
+            elif self._disk_type == "Cache":
+                disks = array_data.get("caches", [])
+            else:
+                disks = array_data.get("disks", [])
                 
-        return container["cpuUsage"]
+            for disk in disks:
+                if disk.get("id") == self._disk_id:
+                    return disk.get("temp")
+            
+            return None
+        except (KeyError, AttributeError, TypeError):
+            return None
+
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
+        try:
+            array_data = self.coordinator.data.get("array_status", {}).get("array", {})
+            
+            # Look in different disk arrays based on type
+            if self._disk_type == "Parity":
+                disks = array_data.get("parities", [])
+            elif self._disk_type == "Cache":
+                disks = array_data.get("caches", [])
+            else:
+                disks = array_data.get("disks", [])
+                
+            for disk in disks:
+                if disk.get("id") == self._disk_id:
+                    return {
+                        ATTR_DISK_NAME: disk.get("name"),
+                        ATTR_DISK_TYPE: self._disk_type,
+                        ATTR_DISK_SIZE: disk.get("size"),
+                        "status": disk.get("status"),
+                    }
+            
+            return {}
+        except (KeyError, AttributeError, TypeError):
+            return {}
 
 
-class UnraidDockerMemorySensor(UnraidDockerEntity, SensorEntity):
-    """Memory usage sensor for an Unraid Docker container."""
+class UnraidDiskSpaceUsedSensor(UnraidDiskEntity, SensorEntity):
+    """Sensor for Unraid disk space used."""
+
+    _attr_native_unit_of_measurement = UnitOfInformation.KIBIBYTES
+    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = ICON_DISK
 
     def __init__(
         self,
-        coordinator,
-        config_entry,
-        container_id,
-        container_name,
-    ) -> None:
-        """Initialize the Docker memory usage sensor."""
-        super().__init__(coordinator, config_entry, container_id, container_name)
-        self._attr_unique_id = f"{config_entry.entry_id}_docker_{container_id}_memory"
-        self._attr_name = f"{container_name} Memory Usage"
-        self._attr_device_class = SensorDeviceClass.DATA_SIZE
-        self._attr_native_unit_of_measurement = UnitOfInformation.MEGABYTES
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        self._attr_icon = "mdi:memory"
-        LOGGER.debug("Initialized Docker memory usage sensor: %s", self._attr_unique_id)
-        
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+        disk_id: str,
+        disk_name: str,
+    ):
+        """Initialize the sensor."""
+        super().__init__(coordinator, server_name, "space_used", disk_id, "Data")
+        self._disk_name = disk_name
+        self._attr_name = f"{disk_name} Space Used"
+
     @property
-    def native_value(self) -> StateType:
-        """Return the memory usage of the container."""
-        container = self._get_container_data()
-        if container is None or "memUsage" not in container:
+    def native_value(self) -> Optional[int]:
+        """Return the state of the sensor."""
+        try:
+            disks = self.coordinator.data.get("array_status", {}).get("array", {}).get("disks", [])
+            
+            for disk in disks:
+                if disk.get("id") == self._disk_id:
+                    return disk.get("fsUsed", 0)
+            
             return None
+        except (KeyError, AttributeError, TypeError):
+            return None
+
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
+        try:
+            disks = self.coordinator.data.get("array_status", {}).get("array", {}).get("disks", [])
             
-        # Handle different units that might be returned
-        if isinstance(container["memUsage"], str):
-            mem_usage = container["memUsage"].lower()
+            for disk in disks:
+                if disk.get("id") == self._disk_id:
+                    return {
+                        ATTR_DISK_NAME: disk.get("name"),
+                        ATTR_DISK_TYPE: "Data",
+                        ATTR_DISK_SIZE: disk.get("size"),
+                        ATTR_DISK_FREE: disk.get("fsFree"),
+                        ATTR_DISK_FS_TYPE: disk.get("fsType"),
+                    }
             
-            # Convert to MB if in different units
-            if mem_usage.endswith('kb'):
-                try:
-                    return round(float(mem_usage.rstrip('kb')) / 1024, 2)
-                except (ValueError, TypeError):
-                    return None
-            elif mem_usage.endswith('mb'):
-                try:
-                    return float(mem_usage.rstrip('mb'))
-                except (ValueError, TypeError):
-                    return None
-            elif mem_usage.endswith('gb'):
-                try:
-                    return float(mem_usage.rstrip('gb')) * 1024
-                except (ValueError, TypeError):
-                    return None
-                    
-        return container["memUsage"]
+            return {}
+        except (KeyError, AttributeError, TypeError):
+            return {}
 
 
-class UnraidDockerMemoryPercentSensor(UnraidDockerEntity, SensorEntity):
-    """Memory percent sensor for an Unraid Docker container."""
+class UnraidDiskSpaceFreeSensor(UnraidDiskEntity, SensorEntity):
+    """Sensor for Unraid disk space free."""
+
+    _attr_native_unit_of_measurement = UnitOfInformation.KIBIBYTES
+    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = ICON_DISK
 
     def __init__(
         self,
-        coordinator,
-        config_entry,
-        container_id,
-        container_name,
-    ) -> None:
-        """Initialize the Docker memory percent sensor."""
-        super().__init__(coordinator, config_entry, container_id, container_name)
-        self._attr_unique_id = f"{config_entry.entry_id}_docker_{container_id}_memory_percent"
-        self._attr_name = f"{container_name} Memory Percent"
-        self._attr_device_class = SensorDeviceClass.BATTERY
-        self._attr_native_unit_of_measurement = PERCENTAGE
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        self._attr_icon = "mdi:memory"
-        LOGGER.debug("Initialized Docker memory percent sensor: %s", self._attr_unique_id)
-        
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+        disk_id: str,
+        disk_name: str,
+    ):
+        """Initialize the sensor."""
+        super().__init__(coordinator, server_name, "space_free", disk_id, "Data")
+        self._disk_name = disk_name
+        self._attr_name = f"{disk_name} Space Free"
+
     @property
-    def native_value(self) -> StateType:
-        """Return the memory percent of the container."""
-        container = self._get_container_data()
-        if container is None or "memPercent" not in container:
-            return None
+    def native_value(self) -> Optional[int]:
+        """Return the state of the sensor."""
+        try:
+            disks = self.coordinator.data.get("array_status", {}).get("array", {}).get("disks", [])
             
-        # Some implementations return this as a string percentage
-        if isinstance(container["memPercent"], str) and container["memPercent"].endswith('%'):
-            try:
-                return float(container["memPercent"].rstrip('%'))
-            except (ValueError, TypeError):
-                return None
-                
-        return container["memPercent"]
+            for disk in disks:
+                if disk.get("id") == self._disk_id:
+                    return disk.get("fsFree", 0)
+            
+            return None
+        except (KeyError, AttributeError, TypeError):
+            return None
+
+
+class UnraidShareSpaceUsedSensor(UnraidShareEntity, SensorEntity):
+    """Sensor for Unraid share space used."""
+
+    _attr_native_unit_of_measurement = UnitOfInformation.KIBIBYTES
+    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = ICON_DISK
+
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+        share_name: str,
+    ):
+        """Initialize the sensor."""
+        super().__init__(coordinator, server_name, "space_used", share_name)
+        self._attr_name = f"Share {share_name} Space Used"
+
+    @property
+    def native_value(self) -> Optional[int]:
+        """Return the state of the sensor."""
+        try:
+            shares = self.coordinator.data.get("shares", {}).get("shares", [])
+            
+            for share in shares:
+                if share.get("name") == self._share_name:
+                    return share.get("used", 0)
+            
+            return None
+        except (KeyError, AttributeError, TypeError):
+            return None
+
+
+class UnraidShareSpaceFreeSensor(UnraidShareEntity, SensorEntity):
+    """Sensor for Unraid share space free."""
+
+    _attr_native_unit_of_measurement = UnitOfInformation.KIBIBYTES
+    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = ICON_DISK
+
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+        share_name: str,
+    ):
+        """Initialize the sensor."""
+        super().__init__(coordinator, server_name, "space_free", share_name)
+        self._attr_name = f"Share {share_name} Space Free"
+
+    @property
+    def native_value(self) -> Optional[int]:
+        """Return the state of the sensor."""
+        try:
+            shares = self.coordinator.data.get("shares", {}).get("shares", [])
+            
+            for share in shares:
+                if share.get("name") == self._share_name:
+                    return share.get("free", 0)
+            
+            return None
+        except (KeyError, AttributeError, TypeError):
+            return None
