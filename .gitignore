@@ -169,3 +169,7 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+custom_components/.DS_Store
+.gitignore
+CLAUDE.md
+.DS_Store
