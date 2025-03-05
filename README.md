@@ -51,9 +51,11 @@ This custom integration allows you to monitor and control your Unraid server thr
 
 1. Install and configure the Unraid Connect plugin on your Unraid server
 2. Generate an API key using the command:
+
    ```bash
    unraid-api apikey --create
    ```
+
 3. In Home Assistant, go to **Settings** → **Devices & Services**
 4. Click **+ ADD INTEGRATION** and search for "Unraid Connect"
 5. Enter your:
@@ -64,12 +66,14 @@ This custom integration allows you to monitor and control your Unraid server thr
 ## Available Entities
 
 ### Binary Sensors
+
 - Array Protection Status
 - Array Started Status
 - Parity Check Running Status
 - Docker Container Running Status (per container)
 
 ### Sensors
+
 - CPU Statistics (cores, threads, temperature, load)
 - Memory Usage and Availability
 - Array Metrics (capacity, size, used space, free space)
@@ -77,11 +81,13 @@ This custom integration allows you to monitor and control your Unraid server thr
 - Docker Container Resource Usage (per container)
 
 ### Switches
+
 - Docker Container Control (start/stop functionality)
 
 ## API Authentication
 
 The integration supports two authentication methods:
+
 1. Direct API key (recommended)
 2. MyUnraid.net URL with API key
 
