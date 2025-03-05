@@ -14,7 +14,7 @@ from .const import (
     ATTR_CONTAINER_STATUS,
     ATTR_VM_STATE,
     CONTAINER_STATE_RUNNING,
-    DOMAIN,
+    DOMAIN as INTEGRATION_DOMAIN,
     ICON_ARRAY,
     ICON_DOCKER,
     ICON_VM,
@@ -34,14 +34,11 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up the Unraid switches."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    name = hass.data[DOMAIN][entry.entry_id]["name"]
-    client = hass.data[DOMAIN][entry.entry_id]["client"]
+    coordinator = hass.data[INTEGRATION_DOMAIN][entry.entry_id]["coordinator"]
+    name = hass.data[INTEGRATION_DOMAIN][entry.entry_id]["name"]
+    client = hass.data[INTEGRATION_DOMAIN][entry.entry_id]["client"]
 
     entities = []
-
-    # Add array switch
-    entities.append(UnraidArraySwitch(coordinator, client, name))
 
     # Add docker container switches
     docker_data = coordinator.data.get("docker_containers", {}).get("dockerContainers", [])
@@ -64,49 +61,6 @@ async def async_setup_entry(
             )
 
     async_add_entities(entities)
-
-
-class UnraidArraySwitch(UnraidArrayEntity, SwitchEntity):
-    """Switch for controlling Unraid array."""
-
-    _attr_name = "Array"
-    _attr_icon = ICON_ARRAY
-
-    def __init__(
-        self,
-        coordinator: UnraidDataUpdateCoordinator,
-        client: UnraidApiClient,
-        server_name: str,
-    ):
-        """Initialize the switch."""
-        super().__init__(coordinator, server_name, "switch")
-        self.client = client
-
-    @property
-    def is_on(self) -> bool:
-        """Return true if the array is running."""
-        try:
-            state = self.coordinator.data.get("array_status", {}).get("array", {}).get("state")
-            return state == ARRAY_STATE_STARTED
-        except (KeyError, AttributeError, TypeError):
-            return False
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        """Turn on the array."""
-        try:
-            await self.client.start_array()
-            await self.coordinator.async_request_refresh()
-        except UnraidApiError as err:
-            _LOGGER.error("Failed to start array: %s", err)
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Turn off the array."""
-        try:
-            await self.client.stop_array()
-            await self.coordinator.async_request_refresh()
-        except UnraidApiError as err:
-            _LOGGER.error("Failed to stop array: %s", err)
-
 
 class UnraidDockerContainerSwitch(UnraidDockerEntity, SwitchEntity):
     """Switch for controlling Unraid Docker container."""
@@ -144,42 +98,18 @@ class UnraidDockerContainerSwitch(UnraidDockerEntity, SwitchEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the container."""
         try:
-            # Call GraphQL mutation to start container
-            # Note: This is a placeholder - actual implementation will depend on the API
-            query = """
-            mutation StartContainer($id: ID!) {
-                startContainer(id: $id) {
-                    id
-                    state
-                }
-            }
-            """
-            await self.client._send_graphql_request(query, {"id": self._container_id})
+            await self.client.start_docker_container(self._container_id)
             await self.coordinator.async_request_refresh()
         except UnraidApiError as err:
             _LOGGER.error("Failed to start container %s: %s", self._container_name, err)
-        except Exception as err:
-            _LOGGER.error("Unexpected error starting container %s: %s", self._container_name, err)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the container."""
         try:
-            # Call GraphQL mutation to stop container
-            # Note: This is a placeholder - actual implementation will depend on the API
-            query = """
-            mutation StopContainer($id: ID!) {
-                stopContainer(id: $id) {
-                    id
-                    state
-                }
-            }
-            """
-            await self.client._send_graphql_request(query, {"id": self._container_id})
+            await self.client.stop_docker_container(self._container_id)
             await self.coordinator.async_request_refresh()
         except UnraidApiError as err:
             _LOGGER.error("Failed to stop container %s: %s", self._container_name, err)
-        except Exception as err:
-            _LOGGER.error("Unexpected error stopping container %s: %s", self._container_name, err)
 
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
@@ -238,42 +168,18 @@ class UnraidVMSwitch(UnraidVMEntity, SwitchEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the VM."""
         try:
-            # Call GraphQL mutation to start VM
-            # Note: This is a placeholder - actual implementation will depend on the API
-            query = """
-            mutation StartVm($id: ID!) {
-                startVm(id: $id) {
-                    uuid
-                    state
-                }
-            }
-            """
-            await self.client._send_graphql_request(query, {"id": self._vm_id})
+            await self.client.start_vm(self._vm_id)
             await self.coordinator.async_request_refresh()
         except UnraidApiError as err:
             _LOGGER.error("Failed to start VM %s: %s", self._vm_name, err)
-        except Exception as err:
-            _LOGGER.error("Unexpected error starting VM %s: %s", self._vm_name, err)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the VM."""
         try:
-            # Call GraphQL mutation to stop VM
-            # Note: This is a placeholder - actual implementation will depend on the API
-            query = """
-            mutation StopVm($id: ID!) {
-                stopVm(id: $id) {
-                    uuid
-                    state
-                }
-            }
-            """
-            await self.client._send_graphql_request(query, {"id": self._vm_id})
+            await self.client.stop_vm(self._vm_id)
             await self.coordinator.async_request_refresh()
         except UnraidApiError as err:
             _LOGGER.error("Failed to stop VM %s: %s", self._vm_name, err)
-        except Exception as err:
-            _LOGGER.error("Unexpected error stopping VM %s: %s", self._vm_name, err)
 
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:

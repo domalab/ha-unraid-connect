@@ -49,17 +49,27 @@ async def validate_input(hass: HomeAssistant, data: dict) -> Dict[str, Any]:
 
     try:
         if not await client.validate_api_connection():
-            raise InvalidAuth
+            _LOGGER.error("Authentication failed. This may be due to CORS restrictions.")
+            _LOGGER.error("Run 'unraid-api extraOrigins --add http://%s:8123' on your Unraid server.",
+                          hass.config.api.local_ip)
+            raise InvalidAuth("API authentication failed, likely due to CORS restrictions")
     except UnraidApiError as err:
+        _LOGGER.error("API Error: %s", err)
         if err.status in ("401", "403"):
             raise InvalidAuth from err
         raise CannotConnect from err
+    except aiohttp.ClientError as err:
+        _LOGGER.error("Connection Error: %s", err)
+        raise CannotConnect from err
+    except Exception as err:
+        _LOGGER.exception("Unexpected error: %s", err)
+        raise
 
     # Return info that you want to store in the config entry.
     return {"title": data[CONF_NAME]}
 
 
-class UnraidConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Unraid."""
 
     VERSION = 1
@@ -70,7 +80,7 @@ class UnraidConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         config_entry: config_entries.ConfigEntry,
     ) -> config_entries.OptionsFlow:
         """Create the options flow."""
-        return UnraidOptionsFlow(config_entry)
+        return OptionsFlow(config_entry)
 
     async def async_step_user(
         self, user_input: Optional[Dict[str, Any]] = None
@@ -84,6 +94,7 @@ class UnraidConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
+                errors[CONF_API_KEY] = "invalid_auth"  # Highlight the API key field specifically
             except Exception:  # pylint: disable=broad-except
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
@@ -95,7 +106,7 @@ class UnraidConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
 
-class UnraidOptionsFlow(config_entries.OptionsFlow):
+class OptionsFlow(config_entries.OptionsFlow):
     """Handle options."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:

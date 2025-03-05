@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
+    EntityCategory,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -16,7 +17,7 @@ from .const import (
     ATTR_CONTAINER_STATUS,
     ATTR_VM_STATE,
     CONTAINER_STATE_RUNNING,
-    DOMAIN,
+    DOMAIN as INTEGRATION_DOMAIN,
     ICON_ARRAY,
     ICON_DISK,
     ICON_DOCKER,
@@ -39,8 +40,8 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up the Unraid binary sensors."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    name = hass.data[DOMAIN][entry.entry_id]["name"]
+    coordinator = hass.data[INTEGRATION_DOMAIN][entry.entry_id]["coordinator"]
+    name = hass.data[INTEGRATION_DOMAIN][entry.entry_id]["name"]
 
     entities = []
 
@@ -112,6 +113,14 @@ class UnraidOnlineBinarySensor(UnraidSystemEntity, BinarySensorEntity):
     _attr_name = "Online"
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
 
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+    ):
+        """Initialize the binary sensor."""
+        super().__init__(coordinator, server_name, "online")  # Add the entity_key
+
     @property
     def is_on(self) -> bool:
         """Return true if the server is online."""
@@ -128,6 +137,14 @@ class UnraidArrayRunningBinarySensor(UnraidArrayEntity, BinarySensorEntity):
     _attr_icon = ICON_ARRAY
     _attr_device_class = BinarySensorDeviceClass.RUNNING
 
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+    ):
+        """Initialize the binary sensor."""
+        super().__init__(coordinator, server_name, "running")
+
     @property
     def is_on(self) -> bool:
         """Return true if the array is running."""
@@ -141,6 +158,7 @@ class UnraidArrayRunningBinarySensor(UnraidArrayEntity, BinarySensorEntity):
 class UnraidDiskHealthBinarySensor(UnraidDiskEntity, BinarySensorEntity):
     """Binary sensor for Unraid disk health."""
 
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_icon = ICON_DISK
 
@@ -214,6 +232,7 @@ class UnraidDiskHealthBinarySensor(UnraidDiskEntity, BinarySensorEntity):
 class UnraidDockerContainerRunningBinarySensor(UnraidDockerEntity, BinarySensorEntity):
     """Binary sensor for Unraid Docker container running status."""
 
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_device_class = BinarySensorDeviceClass.RUNNING
     _attr_icon = ICON_DOCKER
 
@@ -267,6 +286,7 @@ class UnraidDockerContainerRunningBinarySensor(UnraidDockerEntity, BinarySensorE
 class UnraidVMRunningBinarySensor(UnraidVMEntity, BinarySensorEntity):
     """Binary sensor for Unraid VM running status."""
 
+    _attr_entity_category = EntityCategory.DIAGNOSTIC 
     _attr_device_class = BinarySensorDeviceClass.RUNNING
     _attr_icon = ICON_VM
 

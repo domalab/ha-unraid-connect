@@ -22,7 +22,7 @@ import homeassistant.helpers.config_validation as cv
 from .api import UnraidApiClient, UnraidApiError
 from .const import (
     DEFAULT_SCAN_INTERVAL,
-    DOMAIN,
+    DOMAIN as INTEGRATION_DOMAIN,
     SERVICE_CANCEL_PARITY_CHECK,
     SERVICE_PAUSE_PARITY_CHECK,
     SERVICE_RESUME_PARITY_CHECK,
@@ -40,6 +40,7 @@ PLATFORMS = [
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
     Platform.SWITCH,
+    Platform.BUTTON,
 ]
 
 # Service schema for parity check with correction option
@@ -69,6 +70,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         session=session,
         verify_ssl=verify_ssl,
     )
+    
+    # Try to discover redirect URL
+    try:
+        await client.discover_redirect_url()
+    except Exception as err:
+        _LOGGER.warning("Failed to discover redirect URL: %s", err)
 
     # Create coordinator
     coordinator = UnraidDataUpdateCoordinator(
@@ -82,11 +89,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         await coordinator.async_config_entry_first_refresh()
     except ConfigEntryNotReady as err:
+        _LOGGER.error("Failed to get initial data - please ensure:")
+        _LOGGER.error("1. Your API key is correct")
+        _LOGGER.error("2. You've added http://YOUR_HA_IP:8123 to Unraid Connect's extra origins")
+        _LOGGER.error("3. You've clicked APPLY after adding the origin")
         raise ConfigEntryNotReady(f"Failed to get initial data: {err}") from err
 
     # Store coordinator and API client
-    hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = {
+    hass.data.setdefault(INTEGRATION_DOMAIN, {})
+    hass.data[INTEGRATION_DOMAIN][entry.entry_id] = {
         "coordinator": coordinator,
         "client": client,
         "name": name,
@@ -157,16 +168,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.error("Failed to shutdown server: %s", err)
 
     # Register services
-    hass.services.async_register(DOMAIN, SERVICE_START_ARRAY, start_array)
-    hass.services.async_register(DOMAIN, SERVICE_STOP_ARRAY, stop_array)
+    hass.services.async_register(INTEGRATION_DOMAIN, SERVICE_START_ARRAY, start_array)
+    hass.services.async_register(INTEGRATION_DOMAIN, SERVICE_STOP_ARRAY, stop_array)
     hass.services.async_register(
-        DOMAIN, SERVICE_START_PARITY_CHECK, start_parity_check, schema=START_PARITY_SCHEMA
+        INTEGRATION_DOMAIN, SERVICE_START_PARITY_CHECK, start_parity_check, schema=START_PARITY_SCHEMA
     )
-    hass.services.async_register(DOMAIN, SERVICE_PAUSE_PARITY_CHECK, pause_parity_check)
-    hass.services.async_register(DOMAIN, SERVICE_RESUME_PARITY_CHECK, resume_parity_check)
-    hass.services.async_register(DOMAIN, SERVICE_CANCEL_PARITY_CHECK, cancel_parity_check)
-    hass.services.async_register(DOMAIN, SERVICE_REBOOT, reboot)
-    hass.services.async_register(DOMAIN, SERVICE_SHUTDOWN, shutdown)
+    hass.services.async_register(INTEGRATION_DOMAIN, SERVICE_PAUSE_PARITY_CHECK, pause_parity_check)
+    hass.services.async_register(INTEGRATION_DOMAIN, SERVICE_RESUME_PARITY_CHECK, resume_parity_check)
+    hass.services.async_register(INTEGRATION_DOMAIN, SERVICE_CANCEL_PARITY_CHECK, cancel_parity_check)
+    hass.services.async_register(INTEGRATION_DOMAIN, SERVICE_REBOOT, reboot)
+    hass.services.async_register(INTEGRATION_DOMAIN, SERVICE_SHUTDOWN, shutdown)
 
     # Set up all platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -184,7 +195,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Remove entry from data
     if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id)
+        hass.data[INTEGRATION_DOMAIN].pop(entry.entry_id)
 
     return unload_ok
 

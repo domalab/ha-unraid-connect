@@ -1,7 +1,6 @@
 """Constants for the Unraid integration."""
 from homeassistant.const import (
     PERCENTAGE,
-    TEMP_CELSIUS,
     CONF_HOST,
     CONF_API_KEY,
     CONF_NAME,

@@ -1,18 +1,19 @@
 """Sensor platform for Unraid integration."""
 import logging
 from typing import Any, Dict, List, Optional
+from datetime import datetime
+import dateutil.parser
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
+    EntityCategory,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
-    TEMP_CELSIUS,
     CONF_HOST,
-    UnitOfDataSize,
     UnitOfInformation,
     UnitOfTemperature,
 )
@@ -36,11 +37,12 @@ from .const import (
     ATTR_CONTAINER_IMAGE,
     ATTR_CONTAINER_STATUS,
     ATTR_UPTIME,
-    DOMAIN,
+    DOMAIN as INTEGRATION_DOMAIN,
     ICON_ARRAY,
     ICON_CPU,
     ICON_DISK,
     ICON_MEMORY,
+    ICON_SERVER,
     ICON_TEMPERATURE,
 )
 from .coordinator import UnraidDataUpdateCoordinator
@@ -58,8 +60,8 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up the Unraid sensors."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    name = hass.data[DOMAIN][entry.entry_id]["name"]
+    coordinator = hass.data[INTEGRATION_DOMAIN][entry.entry_id]["coordinator"]
+    name = hass.data[INTEGRATION_DOMAIN][entry.entry_id]["name"]
     host = entry.data[CONF_HOST]
 
     entities = []
@@ -131,6 +133,15 @@ class UnraidSystemStateSensor(UnraidSystemEntity, SensorEntity):
 
     _attr_name = "System State"
     _attr_icon = ICON_CPU
+    _attr_entity_category = EntityCategory.DIAGNOSTIC 
+
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+    ):
+        """Initialize the sensor."""
+        super().__init__(coordinator, server_name, "state")
 
     @property
     def native_value(self) -> str:
@@ -168,6 +179,14 @@ class UnraidCpuTempSensor(UnraidSystemEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_state_class = SensorStateClass.MEASUREMENT
 
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+    ):
+        """Initialize the sensor."""
+        super().__init__(coordinator, server_name, "temperature")
+
     @property
     def native_value(self) -> Optional[float]:
         """Return the state of the sensor."""
@@ -186,8 +205,16 @@ class UnraidMemoryUsageSensor(UnraidSystemEntity, SensorEntity):
     _attr_name = "Memory Usage"
     _attr_icon = ICON_MEMORY
     _attr_native_unit_of_measurement = PERCENTAGE
-    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_device_class = None
     _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+    ):
+        """Initialize the sensor."""
+        super().__init__(coordinator, server_name, "memory_usage")
 
     @property
     def native_value(self) -> Optional[float]:
@@ -235,14 +262,26 @@ class UnraidUptimeSensor(UnraidSystemEntity, SensorEntity):
     _attr_name = "Uptime"
     _attr_icon = ICON_SERVER
     _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+    ):
+        """Initialize the sensor."""
+        super().__init__(coordinator, server_name, "uptime")
 
     @property
-    def native_value(self) -> Optional[str]:
+    def native_value(self) -> Optional[datetime]:
         """Return the state of the sensor."""
         try:
-            uptime = self.coordinator.data.get("system_info", {}).get("info", {}).get("os", {}).get("uptime")
-            return uptime
-        except (KeyError, AttributeError, TypeError):
+            uptime_str = self.coordinator.data.get("system_info", {}).get("info", {}).get("os", {}).get("uptime")
+            if uptime_str:
+                # Parse the ISO 8601 datetime string to a datetime object with timezone
+                return dateutil.parser.parse(uptime_str)
+            return None
+        except (KeyError, AttributeError, TypeError, ValueError):
             return None
 
 
@@ -251,6 +290,15 @@ class UnraidArrayStateSensor(UnraidArrayEntity, SensorEntity):
 
     _attr_name = "Array State"
     _attr_icon = ICON_ARRAY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+    ):
+        """Initialize the sensor."""
+        super().__init__(coordinator, server_name, "state")
 
     @property
     def native_value(self) -> str:
@@ -271,11 +319,19 @@ class UnraidArraySpaceUsedSensor(UnraidArrayEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.DATA_SIZE
     _attr_state_class = SensorStateClass.MEASUREMENT
 
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+    ):
+        """Initialize the sensor."""
+        super().__init__(coordinator, server_name, "space_used")
+
     @property
     def native_value(self) -> Optional[int]:
         """Return the state of the sensor."""
         try:
-            used = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {}).get("disks", {}).get("used", "0")
+            used = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {}).get("kilobytes", {}).get("used", "0")
             return int(used) if used else 0
         except (KeyError, AttributeError, TypeError, ValueError):
             return None
@@ -290,11 +346,19 @@ class UnraidArraySpaceFreeSensor(UnraidArrayEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.DATA_SIZE
     _attr_state_class = SensorStateClass.MEASUREMENT
 
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+    ):
+        """Initialize the sensor."""
+        super().__init__(coordinator, server_name, "space_free")
+
     @property
     def native_value(self) -> Optional[int]:
         """Return the state of the sensor."""
         try:
-            free = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {}).get("disks", {}).get("free", "0")
+            free = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {}).get("kilobytes", {}).get("free", "0")
             return int(free) if free else 0
         except (KeyError, AttributeError, TypeError, ValueError):
             return None
@@ -309,11 +373,19 @@ class UnraidArraySpaceTotalSensor(UnraidArrayEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.DATA_SIZE
     _attr_state_class = SensorStateClass.MEASUREMENT
 
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+    ):
+        """Initialize the sensor."""
+        super().__init__(coordinator, server_name, "space_total")
+
     @property
     def native_value(self) -> Optional[int]:
         """Return the state of the sensor."""
         try:
-            total = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {}).get("disks", {}).get("total", "0")
+            total = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {}).get("kilobytes", {}).get("total", "0")
             return int(total) if total else 0
         except (KeyError, AttributeError, TypeError, ValueError):
             return None
@@ -483,6 +555,7 @@ class UnraidDiskSpaceFreeSensor(UnraidDiskEntity, SensorEntity):
 class UnraidShareSpaceUsedSensor(UnraidShareEntity, SensorEntity):
     """Sensor for Unraid share space used."""
 
+    _attr_entity_registry_enabled_default = False
     _attr_native_unit_of_measurement = UnitOfInformation.KIBIBYTES
     _attr_device_class = SensorDeviceClass.DATA_SIZE
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -502,7 +575,7 @@ class UnraidShareSpaceUsedSensor(UnraidShareEntity, SensorEntity):
     def native_value(self) -> Optional[int]:
         """Return the state of the sensor."""
         try:
-            shares = self.coordinator.data.get("shares", {}).get("shares", [])
+            shares = self.coordinator.data.get("shares", {})
             
             for share in shares:
                 if share.get("name") == self._share_name:
@@ -516,6 +589,7 @@ class UnraidShareSpaceUsedSensor(UnraidShareEntity, SensorEntity):
 class UnraidShareSpaceFreeSensor(UnraidShareEntity, SensorEntity):
     """Sensor for Unraid share space free."""
 
+    _attr_entity_registry_enabled_default = False
     _attr_native_unit_of_measurement = UnitOfInformation.KIBIBYTES
     _attr_device_class = SensorDeviceClass.DATA_SIZE
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -535,7 +609,7 @@ class UnraidShareSpaceFreeSensor(UnraidShareEntity, SensorEntity):
     def native_value(self) -> Optional[int]:
         """Return the state of the sensor."""
         try:
-            shares = self.coordinator.data.get("shares", {}).get("shares", [])
+            shares = self.coordinator.data.get("shares", {})
             
             for share in shares:
                 if share.get("name") == self._share_name:

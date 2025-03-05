@@ -5,7 +5,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.entity import DeviceInfo, Entity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, ICON_SERVER
+from .const import DOMAIN as INTEGRATION_DOMAIN, ICON_SERVER
 from .coordinator import UnraidDataUpdateCoordinator
 
 
@@ -31,7 +31,7 @@ class UnraidEntity(CoordinatorEntity, Entity):
     def device_info(self) -> DeviceInfo:
         """Return device information for this entity."""
         return DeviceInfo(
-            identifiers={(DOMAIN, self.coordinator.api.host)},
+            identifiers={(INTEGRATION_DOMAIN, self.coordinator.api.host)},
             name=self._server_name,
             manufacturer="Unraid",
             model=self._get_unraid_version(),
