@@ -6,7 +6,13 @@
 [![hacs][hacsbadge]][hacs]
 [![Quality Scale][quality-scale-badge]][quality-scale]
 
-This custom integration allows you to monitor and control your Unraid server through Home Assistant, providing detailed system information, array status, and Docker container management capabilities.
+This experimental custom integration allows you to monitor and control your Unraid server through Home Assistant, providing detailed system information, array status, and Docker container management capabilities.
+
+## Important
+
+> **This is an experimental integration** that uses the work-in-progress Unraid API. The integration currently offers limited features as the API is still under development. A full release will be available at a later stage.
+>
+> For information on the Unraid API release roadmap, please visit: <https://docs.unraid.net/API/upcoming-features/>
 
 ## Features
 
