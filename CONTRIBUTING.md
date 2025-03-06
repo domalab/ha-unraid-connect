@@ -11,6 +11,7 @@ Please be respectful and considerate of others when contributing to this project
 ### Reporting Bugs
 
 If you find a bug in the integration, please create an issue on GitHub with the following information:
+
 - A clear, descriptive title
 - Steps to reproduce the issue
 - Expected behavior vs. actual behavior
@@ -20,6 +21,7 @@ If you find a bug in the integration, please create an issue on GitHub with the 
 ### Suggesting Enhancements
 
 We welcome suggestions for improvements or new features:
+
 - Use a clear, descriptive title
 - Provide a detailed description of the enhancement
 - Explain why this enhancement would be useful
@@ -42,10 +44,13 @@ We actively welcome pull requests:
 
 1. Clone the repository
 2. Install development dependencies:
+
    ```bash
    pip install -r requirements-dev.txt
    ```
+
 3. Install pre-commit hooks:
+
    ```bash
    pre-commit install
    ```
@@ -67,6 +72,7 @@ pytest --cov=custom_components.unraid_connect
 ## Code Style
 
 This project follows the Home Assistant code style:
+
 - Type hints for all function parameters and return values
 - Docstrings for all public methods and classes
 - Pre-commit hooks for consistent formatting
