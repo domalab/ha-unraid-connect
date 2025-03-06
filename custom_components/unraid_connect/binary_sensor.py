@@ -95,7 +95,7 @@ async def async_setup_entry(
             )
 
     # Add VM binary sensors
-    vm_data = coordinator.data.get("vms", {}).get("vms", {}).get("domain", [])
+    vm_data = coordinator.data.get("vms", {}).get("domain", [])
     for vm in vm_data:
         if vm.get("uuid") and vm.get("name"):
             vm_id = vm.get("uuid")
@@ -215,18 +215,65 @@ class UnraidDiskHealthBinarySensor(UnraidDiskEntity, BinarySensorEntity):
                 
             for disk in disks:
                 if disk.get("id") == self._disk_id:
-                    return {
+                    # Get disk size in bytes and format it
+                    size_bytes = int(disk.get("size", 0)) * 1024 if disk.get("size") else 0
+                    size_formatted = self._format_size(size_bytes)
+                    
+                    # Build base attributes
+                    attributes = {
                         "name": disk.get("name"),
                         "type": self._disk_type,
                         "status": disk.get("status"),
                         "device": disk.get("device"),
-                        "size": disk.get("size"),
+                        "size": size_formatted,
+                        "size_bytes": size_bytes,
                         "numErrors": disk.get("numErrors"),
+                        "rotational": disk.get("rotational", True),
                     }
+                    
+                    # Add temperature if available
+                    temp = disk.get("temp")
+                    if temp is not None:
+                        attributes["temperature"] = temp
+                        
+                    # Add filesystem info if available for data/cache disks
+                    if self._disk_type in ["Data", "Cache"]:
+                        if "fsSize" in disk and "fsFree" in disk and "fsUsed" in disk:
+                            fs_size = int(disk.get("fsSize", 0)) * 1024 if disk.get("fsSize") else 0
+                            fs_free = int(disk.get("fsFree", 0)) * 1024 if disk.get("fsFree") else 0
+                            fs_used = int(disk.get("fsUsed", 0)) * 1024 if disk.get("fsUsed") else 0
+                            
+                            attributes.update({
+                                "fs_size": self._format_size(fs_size),
+                                "fs_free": self._format_size(fs_free),
+                                "fs_used": self._format_size(fs_used),
+                                "fs_size_bytes": fs_size,
+                                "fs_free_bytes": fs_free,
+                                "fs_used_bytes": fs_used,
+                            })
+                            
+                            # Add usage percentage
+                            if fs_size > 0:
+                                attributes["usage_percent"] = round((fs_used / fs_size) * 100, 1)
+                                
+                    return attributes
             
             return {}
-        except (KeyError, AttributeError, TypeError):
+        except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
             return {}
+            
+    def _format_size(self, size_bytes: int) -> str:
+        """Format size to appropriate unit."""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 ** 2:
+            return f"{size_bytes / 1024:.2f} KiB"
+        elif size_bytes < 1024 ** 3:
+            return f"{size_bytes / (1024 ** 2):.2f} MiB"
+        elif size_bytes < 1024 ** 4:
+            return f"{size_bytes / (1024 ** 3):.2f} GiB"
+        else:
+            return f"{size_bytes / (1024 ** 4):.2f} TiB"
 
 
 class UnraidDockerContainerRunningBinarySensor(UnraidDockerEntity, BinarySensorEntity):
@@ -244,9 +291,11 @@ class UnraidDockerContainerRunningBinarySensor(UnraidDockerEntity, BinarySensorE
         container_name: str,
     ):
         """Initialize the binary sensor."""
-        super().__init__(coordinator, server_name, "running", container_id)
+        # Clean container name - remove leading slash if present
+        container_name = container_name.lstrip('/')
         self._container_name = container_name
-        self._attr_name = f"Docker {container_name} Running"
+        super().__init__(coordinator, server_name, "running", container_id)
+        self._attr_name = f"Docker {container_name}"
 
     @property
     def is_on(self) -> bool:
@@ -298,15 +347,17 @@ class UnraidVMRunningBinarySensor(UnraidVMEntity, BinarySensorEntity):
         vm_name: str,
     ):
         """Initialize the binary sensor."""
-        super().__init__(coordinator, server_name, "running", vm_id)
+        # Clean VM name
+        vm_name = vm_name.replace('/', '')
         self._vm_name = vm_name
-        self._attr_name = f"VM {vm_name} Running"
+        super().__init__(coordinator, server_name, "running", vm_id)
+        self._attr_name = f"VM {vm_name}"
 
     @property
     def is_on(self) -> bool:
         """Return true if the VM is running."""
         try:
-            vms = self.coordinator.data.get("vms", {}).get("vms", {}).get("domain", [])
+            vms = self.coordinator.data.get("vms", {}).get("domain", [])
             
             for vm in vms:
                 if vm.get("uuid") == self._vm_id:
@@ -320,7 +371,7 @@ class UnraidVMRunningBinarySensor(UnraidVMEntity, BinarySensorEntity):
     def extra_state_attributes(self) -> Dict[str, Any]:
         """Return the state attributes."""
         try:
-            vms = self.coordinator.data.get("vms", {}).get("vms", {}).get("domain", [])
+            vms = self.coordinator.data.get("vms", {}).get("domain", [])
             
             for vm in vms:
                 if vm.get("uuid") == self._vm_id:

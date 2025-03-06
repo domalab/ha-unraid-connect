@@ -75,6 +75,14 @@ class UnraidArrayEntity(UnraidEntity):
         entity_key: str,
     ):
         """Initialize the entity."""
+        # Normalize entity_key to make cleaner entity_ids
+        if entity_key == "space_used":
+            entity_key = "usage"
+        elif entity_key == "space_free":
+            entity_key = "free_space"
+        elif entity_key == "space_total":
+            entity_key = "total_space"
+            
         super().__init__(coordinator, server_name, "array", entity_key)
 
 
@@ -90,6 +98,12 @@ class UnraidDiskEntity(UnraidEntity):
         disk_type: str,
     ):
         """Initialize the entity."""
+        # Normalize entity_key to make cleaner entity_ids
+        if entity_key == "space_used":
+            entity_key = "usage"
+        elif entity_key == "space_free":
+            entity_key = "free_space"
+            
         super().__init__(coordinator, server_name, "disk", entity_key)
         self._disk_id = disk_id
         self._disk_type = disk_type
@@ -108,6 +122,10 @@ class UnraidDockerEntity(UnraidEntity):
         container_id: str,
     ):
         """Initialize the entity."""
+        # Normalize entity_key - remove "running" to make cleaner entity_ids
+        if entity_key == "running":
+            entity_key = ""
+            
         super().__init__(coordinator, server_name, "docker", entity_key)
         self._container_id = container_id
         # Update unique ID to include container ID
@@ -125,6 +143,10 @@ class UnraidVMEntity(UnraidEntity):
         vm_id: str,
     ):
         """Initialize the entity."""
+        # Normalize entity_key - remove "running" to make cleaner entity_ids
+        if entity_key == "running":
+            entity_key = ""
+            
         super().__init__(coordinator, server_name, "vm", entity_key)
         self._vm_id = vm_id
         # Update unique ID to include VM ID
@@ -142,7 +164,16 @@ class UnraidShareEntity(UnraidEntity):
         share_name: str,
     ):
         """Initialize the entity."""
+        # Clean up share_name for use in entity IDs
+        share_name_clean = share_name.replace('/', '_')
+        self._share_name = share_name  # Keep original for API calls
+        
+        # Normalize entity_key to make cleaner entity_ids
+        if entity_key == "space_used":
+            entity_key = "usage"
+        elif entity_key == "space_free":
+            entity_key = "free_space"
+            
         super().__init__(coordinator, server_name, "share", entity_key)
-        self._share_name = share_name
-        # Update unique ID to include share name
-        self._attr_unique_id = f"{coordinator.api.host}_share_{share_name}_{entity_key}"
+        # Update unique ID to include cleaned share name
+        self._attr_unique_id = f"{coordinator.api.host}_share_{share_name_clean}_{entity_key}"

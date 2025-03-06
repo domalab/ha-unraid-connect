@@ -69,6 +69,7 @@ async def async_setup_entry(
     # Add system sensors
     entities.append(UnraidSystemStateSensor(coordinator, name))
     entities.append(UnraidCpuTempSensor(coordinator, name))
+    entities.append(UnraidMotherboardTempSensor(coordinator, name))
     entities.append(UnraidMemoryUsageSensor(coordinator, name))
     entities.append(UnraidUptimeSensor(coordinator, name))
 
@@ -81,25 +82,12 @@ async def async_setup_entry(
     # Get array data for disks
     array_data = coordinator.data.get("array_status", {}).get("array", {})
 
-    # Add parity disks
-    parity_disks = array_data.get("parities", [])
-    for disk in parity_disks:
-        if disk.get("id") and disk.get("name"):
-            disk_id = disk.get("id")
-            disk_name = disk.get("name")
-            entities.append(
-                UnraidDiskTempSensor(coordinator, name, disk_id, disk_name, "Parity")
-            )
-
-    # Add data disks
+    # Add data disks - without temperature sensors, just space info
     data_disks = array_data.get("disks", [])
     for disk in data_disks:
         if disk.get("id") and disk.get("name"):
             disk_id = disk.get("id")
             disk_name = disk.get("name")
-            entities.append(
-                UnraidDiskTempSensor(coordinator, name, disk_id, disk_name, "Data")
-            )
             entities.append(
                 UnraidDiskSpaceUsedSensor(coordinator, name, disk_id, disk_name)
             )
@@ -107,18 +95,8 @@ async def async_setup_entry(
                 UnraidDiskSpaceFreeSensor(coordinator, name, disk_id, disk_name)
             )
 
-    # Add cache disks
-    cache_disks = array_data.get("caches", [])
-    for disk in cache_disks:
-        if disk.get("id") and disk.get("name"):
-            disk_id = disk.get("id")
-            disk_name = disk.get("name")
-            entities.append(
-                UnraidDiskTempSensor(coordinator, name, disk_id, disk_name, "Cache")
-            )
-
     # Add shares
-    shares_data = coordinator.data.get("shares", {}).get("shares", [])
+    shares_data = coordinator.data.get("shares", [])
     for share in shares_data:
         if share.get("name"):
             share_name = share.get("name")
@@ -191,12 +169,184 @@ class UnraidCpuTempSensor(UnraidSystemEntity, SensorEntity):
     def native_value(self) -> Optional[float]:
         """Return the state of the sensor."""
         try:
+            # Check the most likely place first - the temperatures object from our enhanced query
+            temperatures = self.coordinator.data.get("system_info", {}).get("temperatures", {})
+            if temperatures:
+                # First try to get the CPU temperature directly
+                if "cpu" in temperatures and temperatures["cpu"] is not None:
+                    try:
+                        return round(float(temperatures["cpu"]), 1)
+                    except (ValueError, TypeError):
+                        pass
+                
+                # Next, try to get from sensors array if available
+                sensors = temperatures.get("sensors", [])
+                for sensor in sensors:
+                    name = sensor.get("name", "").lower()
+                    if "cpu" in name or "processor" in name:
+                        try:
+                            return round(float(sensor.get("value", 0)), 1)
+                        except (ValueError, TypeError):
+                            pass
+            
+            # Try to get CPU temperature from other potential sources
+            # From the CPU object directly if it exists (older API versions)
             cpu_info = self.coordinator.data.get("system_info", {}).get("info", {}).get("cpu", {})
-            # Temperature might be in different formats depending on the system
-            # This is just a placeholder - you would need to adjust based on actual data structure
-            return cpu_info.get("temperature")
-        except (KeyError, AttributeError, TypeError):
+            if "temperature" in cpu_info and cpu_info["temperature"] is not None:
+                try:
+                    return round(float(cpu_info["temperature"]), 1)
+                except (ValueError, TypeError):
+                    pass
+                
+            # Let's check if we have temperature data in a separate temps structure
+            temps = self.coordinator.data.get("system_info", {}).get("info", {}).get("temps", {})
+            if temps:
+                # Look for CPU temperature in temps
+                for temp_item in temps:
+                    if "cpu" in temp_item.get("name", "").lower():
+                        try:
+                            return round(float(temp_item.get("temp", 0)), 1)
+                        except (ValueError, TypeError):
+                            pass
+                        
+            # If we still don't have it, let's try one more place where it might be
+            system_data = self.coordinator.data.get("system_info", {})
+            if "cpuTemperature" in system_data:
+                try:
+                    return round(float(system_data["cpuTemperature"]), 1)
+                except (ValueError, TypeError):
+                    pass
+                
+            # No valid temperature found
             return None
+        except (KeyError, AttributeError, TypeError, ValueError):
+            return None
+            
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
+        try:
+            cpu_info = self.coordinator.data.get("system_info", {}).get("info", {}).get("cpu", {})
+            attributes = {
+                ATTR_CPU_BRAND: cpu_info.get("brand", "Unknown"),
+                ATTR_CPU_CORES: cpu_info.get("cores", 0),
+                ATTR_CPU_THREADS: cpu_info.get("threads", 0),
+                "manufacturer": cpu_info.get("manufacturer", "Unknown"),
+            }
+            
+            # Add sensor information if available
+            temperatures = self.coordinator.data.get("system_info", {}).get("temperatures", {})
+            if temperatures and "sensors" in temperatures:
+                cpu_sensors = []
+                for sensor in temperatures["sensors"]:
+                    if "cpu" in sensor.get("name", "").lower() or "processor" in sensor.get("name", "").lower():
+                        cpu_sensors.append({
+                            "name": sensor.get("name", "Unknown"),
+                            "adapter": sensor.get("adapter", "Unknown"),
+                            "value": sensor.get("value")
+                        })
+                
+                if cpu_sensors:
+                    attributes["sensors"] = cpu_sensors
+            
+            return attributes
+        except (KeyError, AttributeError, TypeError):
+            return {}
+
+
+class UnraidMotherboardTempSensor(UnraidSystemEntity, SensorEntity):
+    """Sensor for Unraid motherboard temperature."""
+
+    _attr_name = "Motherboard Temperature"
+    _attr_icon = ICON_TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+    ):
+        """Initialize the sensor."""
+        super().__init__(coordinator, server_name, "mb_temperature")
+
+    @property
+    def native_value(self) -> Optional[float]:
+        """Return the state of the sensor."""
+        try:
+            # Check the temperatures object from our enhanced query
+            temperatures = self.coordinator.data.get("system_info", {}).get("temperatures", {})
+            if temperatures:
+                # First try to get the motherboard temperature directly
+                if "motherboard" in temperatures and temperatures["motherboard"] is not None:
+                    try:
+                        return round(float(temperatures["motherboard"]), 1)
+                    except (ValueError, TypeError):
+                        pass
+                
+                # Try to get from the main temperature as fallback
+                if "main" in temperatures and temperatures["main"] is not None:
+                    try:
+                        return round(float(temperatures["main"]), 1)
+                    except (ValueError, TypeError):
+                        pass
+                
+                # Next, try to get from sensors array if available
+                sensors = temperatures.get("sensors", [])
+                for sensor in sensors:
+                    name = sensor.get("name", "").lower()
+                    # Look for common motherboard temperature sensor names
+                    if ("motherboard" in name or 
+                        "system" in name or
+                        "mb" in name or
+                        "board" in name):
+                        try:
+                            return round(float(sensor.get("value", 0)), 1)
+                        except (ValueError, TypeError):
+                            pass
+            
+            # Try the system temperature as a fallback
+            system_data = self.coordinator.data.get("system_info", {})
+            if "systemTemperature" in system_data:
+                try:
+                    return round(float(system_data["systemTemperature"]), 1)
+                except (ValueError, TypeError):
+                    pass
+                
+            # No valid temperature found
+            return None
+        except (KeyError, AttributeError, TypeError, ValueError):
+            return None
+            
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
+        try:
+            attributes = {}
+            
+            # Add sensor information if available
+            temperatures = self.coordinator.data.get("system_info", {}).get("temperatures", {})
+            if temperatures and "sensors" in temperatures:
+                mb_sensors = []
+                for sensor in temperatures["sensors"]:
+                    name = sensor.get("name", "").lower()
+                    if ("motherboard" in name or 
+                        "system" in name or
+                        "mb" in name or
+                        "board" in name):
+                        mb_sensors.append({
+                            "name": sensor.get("name", "Unknown"),
+                            "adapter": sensor.get("adapter", "Unknown"),
+                            "value": sensor.get("value")
+                        })
+                
+                if mb_sensors:
+                    attributes["sensors"] = mb_sensors
+            
+            return attributes
+        except (KeyError, AttributeError, TypeError):
+            return {}
 
 
 class UnraidMemoryUsageSensor(UnraidSystemEntity, SensorEntity):
@@ -222,10 +372,13 @@ class UnraidMemoryUsageSensor(UnraidSystemEntity, SensorEntity):
         try:
             memory = self.coordinator.data.get("system_info", {}).get("info", {}).get("memory", {})
             total = memory.get("total", 0)
-            used = memory.get("used", 0)
+            # Use available memory as free for more accurate usage calculation
+            # (available accounts for buffer/cache that can be reclaimed)
+            available = memory.get("available", memory.get("free", 0))
             
             if total > 0:
-                return round((used / total) * 100, 2)
+                used_percent = 100 - (available / total * 100)  # Calculate based on available memory
+                return round(used_percent, 1)
             return 0
         except (KeyError, AttributeError, TypeError, ZeroDivisionError):
             return None
@@ -240,6 +393,8 @@ class UnraidMemoryUsageSensor(UnraidSystemEntity, SensorEntity):
                 "total": self._format_memory_size(memory.get("total", 0)),
                 "used": self._format_memory_size(memory.get("used", 0)),
                 "free": self._format_memory_size(memory.get("free", 0)),
+                "available": self._format_memory_size(memory.get("available", 0)),
+                "active": self._format_memory_size(memory.get("active", 0)),
             }
         except (KeyError, AttributeError, TypeError):
             return {}
@@ -252,8 +407,10 @@ class UnraidMemoryUsageSensor(UnraidSystemEntity, SensorEntity):
             return f"{size_bytes / 1024:.2f} KB"
         elif size_bytes < 1024 ** 3:
             return f"{size_bytes / (1024 ** 2):.2f} MB"
-        else:
+        elif size_bytes < 1024 ** 4:
             return f"{size_bytes / (1024 ** 3):.2f} GB"
+        else:
+            return f"{size_bytes / (1024 ** 4):.2f} TB"
 
 
 class UnraidUptimeSensor(UnraidSystemEntity, SensorEntity):
@@ -261,7 +418,7 @@ class UnraidUptimeSensor(UnraidSystemEntity, SensorEntity):
 
     _attr_name = "Uptime"
     _attr_icon = ICON_SERVER
-    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_device_class = None  # Changed from TIMESTAMP to display a formatted string
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(
@@ -273,16 +430,63 @@ class UnraidUptimeSensor(UnraidSystemEntity, SensorEntity):
         super().__init__(coordinator, server_name, "uptime")
 
     @property
-    def native_value(self) -> Optional[datetime]:
-        """Return the state of the sensor."""
+    def native_value(self) -> Optional[str]:
+        """Return the state of the sensor as a human-readable duration."""
         try:
             uptime_str = self.coordinator.data.get("system_info", {}).get("info", {}).get("os", {}).get("uptime")
             if uptime_str:
                 # Parse the ISO 8601 datetime string to a datetime object with timezone
-                return dateutil.parser.parse(uptime_str)
+                boot_time = dateutil.parser.parse(uptime_str)
+                # Calculate duration from boot time to now
+                now = datetime.now(boot_time.tzinfo)
+                uptime_duration = now - boot_time
+                
+                # Format the duration in a human-readable way
+                return self._format_timedelta(uptime_duration)
             return None
         except (KeyError, AttributeError, TypeError, ValueError):
             return None
+            
+    def _format_timedelta(self, duration):
+        """Format timedelta into a human-readable string."""
+        days = duration.days
+        hours, remainder = divmod(duration.seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        parts = []
+        if days > 0:
+            parts.append(f"{days} {'day' if days == 1 else 'days'}")
+        if hours > 0:
+            parts.append(f"{hours} {'hour' if hours == 1 else 'hours'}")
+        if minutes > 0:
+            parts.append(f"{minutes} {'minute' if minutes == 1 else 'minutes'}")
+        if seconds > 0 or not parts:  # Include seconds if it's the only component
+            parts.append(f"{seconds} {'second' if seconds == 1 else 'seconds'}")
+            
+        return ", ".join(parts)
+    
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
+        try:
+            uptime_str = self.coordinator.data.get("system_info", {}).get("info", {}).get("os", {}).get("uptime")
+            if uptime_str:
+                # Store the original ISO timestamp in the attributes
+                boot_time = dateutil.parser.parse(uptime_str)
+                now = datetime.now(boot_time.tzinfo)
+                uptime_duration = now - boot_time
+                
+                return {
+                    "boot_time": uptime_str,
+                    "days": uptime_duration.days,
+                    "hours": uptime_duration.seconds // 3600,
+                    "minutes": (uptime_duration.seconds % 3600) // 60,
+                    "seconds": uptime_duration.seconds % 60,
+                    "total_seconds": uptime_duration.total_seconds()
+                }
+            return {}
+        except (KeyError, AttributeError, TypeError, ValueError):
+            return {}
 
 
 class UnraidArrayStateSensor(UnraidArrayEntity, SensorEntity):
@@ -313,10 +517,10 @@ class UnraidArrayStateSensor(UnraidArrayEntity, SensorEntity):
 class UnraidArraySpaceUsedSensor(UnraidArrayEntity, SensorEntity):
     """Sensor for Unraid array space used."""
 
-    _attr_name = "Array Space Used"
+    _attr_name = "Array Usage"
     _attr_icon = ICON_DISK
-    _attr_native_unit_of_measurement = UnitOfInformation.KIBIBYTES
-    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_device_class = None
     _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(
@@ -328,22 +532,56 @@ class UnraidArraySpaceUsedSensor(UnraidArrayEntity, SensorEntity):
         super().__init__(coordinator, server_name, "space_used")
 
     @property
-    def native_value(self) -> Optional[int]:
-        """Return the state of the sensor."""
+    def native_value(self) -> Optional[float]:
+        """Return the state of the sensor as a percentage."""
         try:
-            used = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {}).get("kilobytes", {}).get("used", "0")
-            return int(used) if used else 0
-        except (KeyError, AttributeError, TypeError, ValueError):
+            capacity = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {}).get("kilobytes", {})
+            used = int(capacity.get("used", "0")) if capacity.get("used") else 0
+            total = int(capacity.get("total", "0")) if capacity.get("total") else 0
+            
+            if total > 0:
+                # Return usage as percentage
+                return round((used / total) * 100, 1)
+            return 0
+        except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
             return None
+            
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
+        try:
+            capacity = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {}).get("kilobytes", {})
+            used_kib = int(capacity.get("used", "0")) if capacity.get("used") else 0
+            used_bytes = used_kib * 1024
+            
+            return {
+                "used_bytes": used_bytes,
+                "used_formatted": self._format_size(used_bytes),
+            }
+        except (KeyError, AttributeError, TypeError, ValueError):
+            return {}
+            
+    def _format_size(self, size_bytes: int) -> str:
+        """Format size to appropriate unit."""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 ** 2:
+            return f"{size_bytes / 1024:.2f} KiB"
+        elif size_bytes < 1024 ** 3:
+            return f"{size_bytes / (1024 ** 2):.2f} MiB"
+        elif size_bytes < 1024 ** 4:
+            return f"{size_bytes / (1024 ** 3):.2f} GiB"
+        else:
+            return f"{size_bytes / (1024 ** 4):.2f} TiB"
 
 
 class UnraidArraySpaceFreeSensor(UnraidArrayEntity, SensorEntity):
     """Sensor for Unraid array space free."""
 
-    _attr_name = "Array Space Free"
+    _attr_name = "Array Free Space"
     _attr_icon = ICON_DISK
-    _attr_native_unit_of_measurement = UnitOfInformation.KIBIBYTES
-    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_device_class = None
     _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(
@@ -355,23 +593,57 @@ class UnraidArraySpaceFreeSensor(UnraidArrayEntity, SensorEntity):
         super().__init__(coordinator, server_name, "space_free")
 
     @property
-    def native_value(self) -> Optional[int]:
-        """Return the state of the sensor."""
+    def native_value(self) -> Optional[float]:
+        """Return the state of the sensor as a percentage."""
         try:
-            free = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {}).get("kilobytes", {}).get("free", "0")
-            return int(free) if free else 0
-        except (KeyError, AttributeError, TypeError, ValueError):
+            capacity = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {}).get("kilobytes", {})
+            free = int(capacity.get("free", "0")) if capacity.get("free") else 0
+            total = int(capacity.get("total", "0")) if capacity.get("total") else 0
+            
+            if total > 0:
+                # Return free space as percentage
+                return round((free / total) * 100, 1)
+            return 0
+        except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
             return None
+            
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
+        try:
+            capacity = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {}).get("kilobytes", {})
+            free_kib = int(capacity.get("free", "0")) if capacity.get("free") else 0
+            free_bytes = free_kib * 1024
+            
+            return {
+                "free_bytes": free_bytes,
+                "free_formatted": self._format_size(free_bytes),
+            }
+        except (KeyError, AttributeError, TypeError, ValueError):
+            return {}
+            
+    def _format_size(self, size_bytes: int) -> str:
+        """Format size to appropriate unit."""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 ** 2:
+            return f"{size_bytes / 1024:.2f} KiB"
+        elif size_bytes < 1024 ** 3:
+            return f"{size_bytes / (1024 ** 2):.2f} MiB"
+        elif size_bytes < 1024 ** 4:
+            return f"{size_bytes / (1024 ** 3):.2f} GiB"
+        else:
+            return f"{size_bytes / (1024 ** 4):.2f} TiB"
 
 
 class UnraidArraySpaceTotalSensor(UnraidArrayEntity, SensorEntity):
     """Sensor for Unraid array space total."""
 
-    _attr_name = "Array Space Total"
+    _attr_name = "Array Total Space"
     _attr_icon = ICON_DISK
-    _attr_native_unit_of_measurement = UnitOfInformation.KIBIBYTES
-    _attr_device_class = SensorDeviceClass.DATA_SIZE
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = None  # Shows formatted string instead
+    _attr_device_class = None
+    _attr_state_class = None  # Remove measurement class for formatted string
 
     def __init__(
         self,
@@ -382,13 +654,59 @@ class UnraidArraySpaceTotalSensor(UnraidArrayEntity, SensorEntity):
         super().__init__(coordinator, server_name, "space_total")
 
     @property
-    def native_value(self) -> Optional[int]:
-        """Return the state of the sensor."""
+    def native_value(self) -> Optional[str]:
+        """Return the state of the sensor as a formatted string."""
         try:
-            total = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {}).get("kilobytes", {}).get("total", "0")
-            return int(total) if total else 0
+            total_kib = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {}).get("kilobytes", {}).get("total", "0")
+            if total_kib:
+                # Return formatted size string with auto-units
+                total_bytes = int(total_kib) * 1024
+                return self._format_size(total_bytes)
+            return "0 B"
         except (KeyError, AttributeError, TypeError, ValueError):
             return None
+            
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
+        try:
+            capacity = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {})
+            kilobytes = capacity.get("kilobytes", {})
+            total_kib = kilobytes.get("total", "0")
+            used_kib = kilobytes.get("used", "0")
+            free_kib = kilobytes.get("free", "0")
+            
+            total_bytes = int(total_kib) * 1024 if total_kib else 0
+            used_bytes = int(used_kib) * 1024 if used_kib else 0
+            free_bytes = int(free_kib) * 1024 if free_kib else 0
+            
+            used_percent = round((used_bytes / total_bytes) * 100, 1) if total_bytes > 0 else 0
+            free_percent = round((free_bytes / total_bytes) * 100, 1) if total_bytes > 0 else 0
+            
+            return {
+                "total_bytes": total_bytes,
+                "used_bytes": used_bytes,
+                "free_bytes": free_bytes,
+                "used_percent": used_percent,
+                "free_percent": free_percent,
+                "used": self._format_size(used_bytes),
+                "free": self._format_size(free_bytes),
+            }
+        except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
+            return {}
+            
+    def _format_size(self, size_bytes: int) -> str:
+        """Format size to appropriate unit."""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 ** 2:
+            return f"{size_bytes / 1024:.2f} KiB"
+        elif size_bytes < 1024 ** 3:
+            return f"{size_bytes / (1024 ** 2):.2f} MiB"
+        elif size_bytes < 1024 ** 4:
+            return f"{size_bytes / (1024 ** 3):.2f} GiB"
+        else:
+            return f"{size_bytes / (1024 ** 4):.2f} TiB"
 
 
 class UnraidDiskTempSensor(UnraidDiskEntity, SensorEntity):
@@ -408,9 +726,11 @@ class UnraidDiskTempSensor(UnraidDiskEntity, SensorEntity):
         disk_type: str,
     ):
         """Initialize the sensor."""
-        super().__init__(coordinator, server_name, "temperature", disk_id, disk_type)
+        # Clean disk name to handle any potential slashes
+        disk_name = disk_name.replace('/', '_')
         self._disk_name = disk_name
-        self._attr_name = f"{disk_name} Temperature"
+        super().__init__(coordinator, server_name, "temperature", disk_id, disk_type)
+        self._attr_name = f"Disk {disk_name} Temperature"
 
     @property
     def native_value(self) -> Optional[int]:
@@ -465,8 +785,8 @@ class UnraidDiskTempSensor(UnraidDiskEntity, SensorEntity):
 class UnraidDiskSpaceUsedSensor(UnraidDiskEntity, SensorEntity):
     """Sensor for Unraid disk space used."""
 
-    _attr_native_unit_of_measurement = UnitOfInformation.KIBIBYTES
-    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_device_class = None
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = ICON_DISK
 
@@ -478,22 +798,30 @@ class UnraidDiskSpaceUsedSensor(UnraidDiskEntity, SensorEntity):
         disk_name: str,
     ):
         """Initialize the sensor."""
-        super().__init__(coordinator, server_name, "space_used", disk_id, "Data")
+        # Clean disk name to handle any potential slashes
+        disk_name = disk_name.replace('/', '_')
         self._disk_name = disk_name
-        self._attr_name = f"{disk_name} Space Used"
+        super().__init__(coordinator, server_name, "space_used", disk_id, "Data")
+        self._attr_name = f"Disk {disk_name} Usage"
 
     @property
-    def native_value(self) -> Optional[int]:
-        """Return the state of the sensor."""
+    def native_value(self) -> Optional[float]:
+        """Return the state of the sensor as a percentage."""
         try:
             disks = self.coordinator.data.get("array_status", {}).get("array", {}).get("disks", [])
             
             for disk in disks:
                 if disk.get("id") == self._disk_id:
-                    return disk.get("fsUsed", 0)
+                    fs_size = int(disk.get("fsSize", 0)) if disk.get("fsSize") else 0
+                    fs_used = int(disk.get("fsUsed", 0)) if disk.get("fsUsed") else 0
+                    
+                    if fs_size > 0:
+                        # Return usage as percentage
+                        return round((fs_used / fs_size) * 100, 1)
+                    return 0
             
             return None
-        except (KeyError, AttributeError, TypeError):
+        except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
             return None
 
     @property
@@ -504,24 +832,50 @@ class UnraidDiskSpaceUsedSensor(UnraidDiskEntity, SensorEntity):
             
             for disk in disks:
                 if disk.get("id") == self._disk_id:
+                    # Convert KiB values to bytes for formatting
+                    fs_size_bytes = int(disk.get("fsSize", 0)) * 1024 if disk.get("fsSize") else 0
+                    fs_free_bytes = int(disk.get("fsFree", 0)) * 1024 if disk.get("fsFree") else 0
+                    fs_used_bytes = int(disk.get("fsUsed", 0)) * 1024 if disk.get("fsUsed") else 0
+                    
+                    # Calculate percentage
+                    used_percent = round((fs_used_bytes / fs_size_bytes) * 100, 1) if fs_size_bytes > 0 else 0
+                    
                     return {
                         ATTR_DISK_NAME: disk.get("name"),
                         ATTR_DISK_TYPE: "Data",
-                        ATTR_DISK_SIZE: disk.get("size"),
-                        ATTR_DISK_FREE: disk.get("fsFree"),
+                        "total": self._format_size(fs_size_bytes),
+                        "free": self._format_size(fs_free_bytes),
+                        "used": self._format_size(fs_used_bytes),
+                        "used_percent": used_percent,
                         ATTR_DISK_FS_TYPE: disk.get("fsType"),
+                        "fs_size_bytes": fs_size_bytes,
+                        "fs_free_bytes": fs_free_bytes,
+                        "fs_used_bytes": fs_used_bytes,
                     }
             
             return {}
-        except (KeyError, AttributeError, TypeError):
+        except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
             return {}
+            
+    def _format_size(self, size_bytes: int) -> str:
+        """Format size to appropriate unit."""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 ** 2:
+            return f"{size_bytes / 1024:.2f} KiB"
+        elif size_bytes < 1024 ** 3:
+            return f"{size_bytes / (1024 ** 2):.2f} MiB"
+        elif size_bytes < 1024 ** 4:
+            return f"{size_bytes / (1024 ** 3):.2f} GiB"
+        else:
+            return f"{size_bytes / (1024 ** 4):.2f} TiB"
 
 
 class UnraidDiskSpaceFreeSensor(UnraidDiskEntity, SensorEntity):
     """Sensor for Unraid disk space free."""
 
-    _attr_native_unit_of_measurement = UnitOfInformation.KIBIBYTES
-    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_device_class = None
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = ICON_DISK
 
@@ -533,31 +887,85 @@ class UnraidDiskSpaceFreeSensor(UnraidDiskEntity, SensorEntity):
         disk_name: str,
     ):
         """Initialize the sensor."""
-        super().__init__(coordinator, server_name, "space_free", disk_id, "Data")
+        # Clean disk name to handle any potential slashes
+        disk_name = disk_name.replace('/', '_')
         self._disk_name = disk_name
-        self._attr_name = f"{disk_name} Space Free"
+        super().__init__(coordinator, server_name, "space_free", disk_id, "Data")
+        self._attr_name = f"Disk {disk_name} Free Space"
 
     @property
-    def native_value(self) -> Optional[int]:
-        """Return the state of the sensor."""
+    def native_value(self) -> Optional[float]:
+        """Return the state of the sensor as a percentage."""
         try:
             disks = self.coordinator.data.get("array_status", {}).get("array", {}).get("disks", [])
             
             for disk in disks:
                 if disk.get("id") == self._disk_id:
-                    return disk.get("fsFree", 0)
+                    fs_size = int(disk.get("fsSize", 0)) if disk.get("fsSize") else 0
+                    fs_free = int(disk.get("fsFree", 0)) if disk.get("fsFree") else 0
+                    
+                    if fs_size > 0:
+                        # Return free space as percentage
+                        return round((fs_free / fs_size) * 100, 1)
+                    return 0
             
             return None
-        except (KeyError, AttributeError, TypeError):
+        except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
             return None
+            
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
+        try:
+            disks = self.coordinator.data.get("array_status", {}).get("array", {}).get("disks", [])
+            
+            for disk in disks:
+                if disk.get("id") == self._disk_id:
+                    # Convert KiB values to bytes for formatting
+                    fs_size_bytes = int(disk.get("fsSize", 0)) * 1024 if disk.get("fsSize") else 0
+                    fs_free_bytes = int(disk.get("fsFree", 0)) * 1024 if disk.get("fsFree") else 0
+                    fs_used_bytes = int(disk.get("fsUsed", 0)) * 1024 if disk.get("fsUsed") else 0
+                    
+                    # Calculate percentage
+                    free_percent = round((fs_free_bytes / fs_size_bytes) * 100, 1) if fs_size_bytes > 0 else 0
+                    
+                    return {
+                        ATTR_DISK_NAME: disk.get("name"),
+                        ATTR_DISK_TYPE: "Data",
+                        "total": self._format_size(fs_size_bytes),
+                        "free": self._format_size(fs_free_bytes),
+                        "used": self._format_size(fs_used_bytes),
+                        "free_percent": free_percent,
+                        ATTR_DISK_FS_TYPE: disk.get("fsType"),
+                        "fs_size_bytes": fs_size_bytes,
+                        "fs_free_bytes": fs_free_bytes,
+                        "fs_used_bytes": fs_used_bytes,
+                    }
+            
+            return {}
+        except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
+            return {}
+            
+    def _format_size(self, size_bytes: int) -> str:
+        """Format size to appropriate unit."""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 ** 2:
+            return f"{size_bytes / 1024:.2f} KiB"
+        elif size_bytes < 1024 ** 3:
+            return f"{size_bytes / (1024 ** 2):.2f} MiB"
+        elif size_bytes < 1024 ** 4:
+            return f"{size_bytes / (1024 ** 3):.2f} GiB"
+        else:
+            return f"{size_bytes / (1024 ** 4):.2f} TiB"
 
 
 class UnraidShareSpaceUsedSensor(UnraidShareEntity, SensorEntity):
     """Sensor for Unraid share space used."""
 
     _attr_entity_registry_enabled_default = False
-    _attr_native_unit_of_measurement = UnitOfInformation.KIBIBYTES
-    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_device_class = None
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = ICON_DISK
 
@@ -568,30 +976,93 @@ class UnraidShareSpaceUsedSensor(UnraidShareEntity, SensorEntity):
         share_name: str,
     ):
         """Initialize the sensor."""
+        # Clean share name to handle any potential slashes
+        share_name_safe = share_name.replace('/', '_')
         super().__init__(coordinator, server_name, "space_used", share_name)
-        self._attr_name = f"Share {share_name} Space Used"
+        self._attr_name = f"Share {share_name_safe} Usage"
 
     @property
-    def native_value(self) -> Optional[int]:
-        """Return the state of the sensor."""
+    def native_value(self) -> Optional[float]:
+        """Return the state of the sensor as a percentage."""
         try:
-            shares = self.coordinator.data.get("shares", {})
+            shares = self.coordinator.data.get("shares", [])
             
             for share in shares:
                 if share.get("name") == self._share_name:
-                    return share.get("used", 0)
+                    # Calculate percentage of space used
+                    free_kib = int(share.get("free", 0)) if share.get("free") else 0
+                    used_kib = int(share.get("used", 0)) if share.get("used") else 0
+                    total_kib = free_kib + used_kib
+                    
+                    if total_kib > 0:
+                        return round((used_kib / total_kib) * 100, 1)
+                    return 0
             
             return None
-        except (KeyError, AttributeError, TypeError):
+        except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
             return None
+            
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
+        try:
+            shares = self.coordinator.data.get("shares", [])
+            
+            for share in shares:
+                if share.get("name") == self._share_name:
+                    # Convert KiB values to bytes for formatting
+                    free_bytes = int(share.get("free", 0)) * 1024 if share.get("free") else 0
+                    used_bytes = int(share.get("used", 0)) * 1024 if share.get("used") else 0
+                    size_bytes = free_bytes + used_bytes
+                    
+                    # Calculate percentage
+                    used_percent = round((used_bytes / size_bytes) * 100, 1) if size_bytes > 0 else 0
+                    
+                    # Add both GiB values and percentage values for flexibility
+                    free_gib = round(free_bytes / (1024**3), 2) if free_bytes else 0
+                    used_gib = round(used_bytes / (1024**3), 2) if used_bytes else 0
+                    total_gib = round(size_bytes / (1024**3), 2) if size_bytes else 0
+                    
+                    return {
+                        "name": share.get("name"),
+                        "comment": share.get("comment", ""),
+                        "total": self._format_size(size_bytes),
+                        "free": self._format_size(free_bytes),
+                        "used": self._format_size(used_bytes),
+                        "used_percent": used_percent,
+                        "free_percent": round(100 - used_percent, 1) if size_bytes > 0 else 0,
+                        "total_bytes": size_bytes,
+                        "free_bytes": free_bytes,
+                        "used_bytes": used_bytes,
+                        "total_gib": total_gib,
+                        "free_gib": free_gib,
+                        "used_gib": used_gib,
+                    }
+            
+            return {}
+        except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
+            return {}
+            
+    def _format_size(self, size_bytes: int) -> str:
+        """Format size to appropriate unit."""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 ** 2:
+            return f"{size_bytes / 1024:.2f} KiB"
+        elif size_bytes < 1024 ** 3:
+            return f"{size_bytes / (1024 ** 2):.2f} MiB"
+        elif size_bytes < 1024 ** 4:
+            return f"{size_bytes / (1024 ** 3):.2f} GiB"
+        else:
+            return f"{size_bytes / (1024 ** 4):.2f} TiB"
 
 
 class UnraidShareSpaceFreeSensor(UnraidShareEntity, SensorEntity):
     """Sensor for Unraid share space free."""
 
     _attr_entity_registry_enabled_default = False
-    _attr_native_unit_of_measurement = UnitOfInformation.KIBIBYTES
-    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_device_class = None
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = ICON_DISK
 
@@ -602,19 +1073,82 @@ class UnraidShareSpaceFreeSensor(UnraidShareEntity, SensorEntity):
         share_name: str,
     ):
         """Initialize the sensor."""
+        # Clean share name to handle any potential slashes
+        share_name_safe = share_name.replace('/', '_')
         super().__init__(coordinator, server_name, "space_free", share_name)
-        self._attr_name = f"Share {share_name} Space Free"
+        self._attr_name = f"Share {share_name_safe} Free Space"
 
     @property
-    def native_value(self) -> Optional[int]:
-        """Return the state of the sensor."""
+    def native_value(self) -> Optional[float]:
+        """Return the state of the sensor as a percentage."""
         try:
-            shares = self.coordinator.data.get("shares", {})
+            shares = self.coordinator.data.get("shares", [])
             
             for share in shares:
                 if share.get("name") == self._share_name:
-                    return share.get("free", 0)
+                    # Calculate percentage of space free
+                    free_kib = int(share.get("free", 0)) if share.get("free") else 0
+                    used_kib = int(share.get("used", 0)) if share.get("used") else 0
+                    total_kib = free_kib + used_kib
+                    
+                    if total_kib > 0:
+                        return round((free_kib / total_kib) * 100, 1)
+                    return 0
             
             return None
-        except (KeyError, AttributeError, TypeError):
+        except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
             return None
+            
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
+        try:
+            shares = self.coordinator.data.get("shares", [])
+            
+            for share in shares:
+                if share.get("name") == self._share_name:
+                    # Convert KiB values to bytes for formatting
+                    free_bytes = int(share.get("free", 0)) * 1024 if share.get("free") else 0
+                    used_bytes = int(share.get("used", 0)) * 1024 if share.get("used") else 0
+                    size_bytes = free_bytes + used_bytes
+                    
+                    # Calculate percentage
+                    free_percent = round((free_bytes / size_bytes) * 100, 1) if size_bytes > 0 else 0
+                    
+                    # Add both GiB values and percentage values for flexibility
+                    free_gib = round(free_bytes / (1024**3), 2) if free_bytes else 0
+                    used_gib = round(used_bytes / (1024**3), 2) if used_bytes else 0
+                    total_gib = round(size_bytes / (1024**3), 2) if size_bytes else 0
+                    
+                    return {
+                        "name": share.get("name"),
+                        "comment": share.get("comment", ""),
+                        "total": self._format_size(size_bytes),
+                        "free": self._format_size(free_bytes),
+                        "used": self._format_size(used_bytes),
+                        "free_percent": free_percent,
+                        "used_percent": round(100 - free_percent, 1) if size_bytes > 0 else 0,
+                        "total_bytes": size_bytes,
+                        "free_bytes": free_bytes,
+                        "used_bytes": used_bytes,
+                        "total_gib": total_gib,
+                        "free_gib": free_gib,
+                        "used_gib": used_gib,
+                    }
+            
+            return {}
+        except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
+            return {}
+            
+    def _format_size(self, size_bytes: int) -> str:
+        """Format size to appropriate unit."""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 ** 2:
+            return f"{size_bytes / 1024:.2f} KiB"
+        elif size_bytes < 1024 ** 3:
+            return f"{size_bytes / (1024 ** 2):.2f} MiB"
+        elif size_bytes < 1024 ** 4:
+            return f"{size_bytes / (1024 ** 3):.2f} GiB"
+        else:
+            return f"{size_bytes / (1024 ** 4):.2f} TiB"

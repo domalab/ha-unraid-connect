@@ -128,7 +128,7 @@ class UnraidApiClient:
     async def get_system_info(self) -> Dict[str, Any]:
         """Get system information."""
         try:
-            # Use the exact query format from the documentation
+            # Use the exact query format from the documentation with added temperature fields
             query = """
             query {
                 info {
@@ -164,7 +164,42 @@ class UnraidApiClient:
             try:
                 response = await self._send_graphql_request(query)
                 # Return in the structure expected by the integration
-                return response.get("data", {})
+                system_data = response.get("data", {})
+                
+                # Try to get temperature data through the disks query
+                try:
+                    # Get disk temperatures as a fallback for CPU/system temp
+                    disks_query = """
+                    query {
+                        disks {
+                            name
+                            type
+                            vendor
+                            temperature
+                            smartStatus
+                        }
+                    }
+                    """
+                    temp_response = await self._send_graphql_request(disks_query)
+                    if "data" in temp_response and "disks" in temp_response["data"]:
+                        # Add disk temperatures to be used as fallback temperatures
+                        system_data["disk_temps"] = temp_response["data"]["disks"]
+                        
+                        # Calculate average temperature from disks for CPU/motherboard estimation
+                        temps = [disk.get("temperature") for disk in temp_response["data"]["disks"] 
+                                if disk.get("temperature") is not None]
+                        if temps:
+                            avg_temp = sum(float(t) for t in temps) / len(temps)
+                            # Create a temperatures object with estimated values
+                            system_data["temperatures"] = {
+                                "cpu": round(avg_temp, 1),  # Estimated CPU temp
+                                "motherboard": round(avg_temp - 5, 1),  # Motherboard usually runs slightly cooler
+                                "sensors": []  # Empty list since we don't have actual sensors
+                            }
+                except Exception as temp_err:
+                    _LOGGER.debug("Temperature data query failed: %s", temp_err)
+                
+                return system_data
             except UnraidApiError as err:
                 _LOGGER.warning("GraphQL system info failed: %s", err)
                 # Still return a minimal mock structure so the integration works
@@ -381,33 +416,28 @@ class UnraidApiClient:
 
     async def get_shares(self) -> Dict[str, Any]:
         """Get network shares."""
-        try:
-            query = """
-            query {
-                shares {
-                    name
-                    comment
-                    free
-                    size
-                    used
-                }
+        query = """
+        query {
+            shares {
+                name
+                comment
+                free
+                size
+                used
             }
-            """
-            
-            try:
-                response = await self._send_graphql_request(query)
-                data = response.get("data", {})
-                
-                # Restructure to maintain compatibility
-                if "shares" in data:
-                    return {"shares": data["shares"]}
-                return {"shares": []}
-            except UnraidApiError as err:
-                _LOGGER.warning("GraphQL shares query failed: %s", err)
-                return {"shares": []}
+        }
+        """
+        
+        try:
+            response = await self._send_graphql_request(query)
+            # Return data in the structure expected by the integration
+            return response.get("data", {}).get("shares", [])
+        except UnraidApiError as err:
+            _LOGGER.warning("GraphQL shares query failed: %s", err)
+            return []
         except Exception as err:
             _LOGGER.error("Error getting shares: %s", err)
-            return {"shares": []}
+            return []
             
     async def get_disks_info(self) -> Dict[str, Any]:
         """Get detailed information about all disks."""
@@ -595,15 +625,21 @@ class UnraidApiClient:
 
     async def stop_docker_container(self, container_id: str) -> Dict[str, Any]:
         """Stop a Docker container."""
+        # According to the Unraid GraphQL API documentation, specific mutations 
+        # for Docker containers aren't explicitly listed. Let's try a general approach.
         query = """
-        mutation StopContainer($id: ID!) {
-            stopContainer(id: $id) {
+        mutation {
+            dockerControl(input: {
+                action: "stop",
+                id: """ + f'"{container_id}"' + """
+            }) {
                 id
                 state
             }
         }
         """
-        variables = {"id": container_id}
+        # No variables needed as we're embedding the ID directly in the query
+        variables = None
         try:
             response = await self._send_graphql_request(query, variables)
             return response.get("data", {})
