@@ -8,8 +8,6 @@
 
 This custom integration allows you to monitor and control your Unraid server through Home Assistant, providing detailed system information, array status, and Docker container management capabilities.
 
-![Unraid Connect Dashboard][dashboard-image]
-
 ## Features
 
 - **System Monitoring**
@@ -35,7 +33,7 @@ This custom integration allows you to monitor and control your Unraid server thr
 - **Docker Container Control**
   - Container status monitoring through binary sensors
   - Start/stop/restart capabilities via service calls
-  - Resource usage tracking 
+  - Resource usage tracking
   - Container health checks
 
 - **VM Management**
@@ -57,12 +55,7 @@ This custom integration allows you to monitor and control your Unraid server thr
 
 ### Option 1: HACS (Recommended)
 
-1. Ensure [HACS](https://hacs.xyz/) is installed in your Home Assistant instance
-2. Add this repository as a custom repository in HACS:
-   - Repository: `your-github-username/ha-unraid-connect`
-   - Category: `Integration`
-3. Click "Download" on the Unraid Connect integration
-4. Restart Home Assistant to complete the installation
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=domalab&category=integration&repository=ha-unraid-connect)
 
 ### Option 2: Manual Installation
 
@@ -247,7 +240,6 @@ This integration is not officially affiliated with Lime Technology, Inc. or Unra
 
 [commits-shield]: https://img.shields.io/github/commit-activity/m/your-github-username/ha-unraid-connect?style=for-the-badge
 [commits]: https://github.com/your-github-username/ha-unraid-connect/commits/main
-[dashboard-image]: images/dashboard.png
 [hacs]: https://hacs.xyz
 [hacsbadge]: https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge
 [license]: LICENSE
