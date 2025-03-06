@@ -244,13 +244,13 @@ This integration is not officially affiliated with Lime Technology, Inc. or Unra
 
 ---
 
-[commits-shield]: https://img.shields.io/github/commit-activity/m/your-github-username/ha-unraid-connect?style=for-the-badge
-[commits]: https://github.com/your-github-username/ha-unraid-connect/commits/main
+[commits-shield]: https://img.shields.io/github/commit-activity/m/domalab/ha-unraid-connect?style=for-the-badge
+[commits]: https://github.com/domalab/ha-unraid-connect/commits/main
 [hacs]: https://hacs.xyz
 [hacsbadge]: https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge
 [license]: LICENSE
-[license-shield]: https://img.shields.io/github/license/your-github-username/ha-unraid-connect?style=for-the-badge
+[license-shield]: https://img.shields.io/github/license/domalab/ha-unraid-connect?style=for-the-badge
 [quality-scale]: https://developers.home-assistant.io/docs/quality_scale
 [quality-scale-badge]: https://img.shields.io/badge/quality%20scale-silver-B8B8B8.svg?style=for-the-badge
-[releases-shield]: https://img.shields.io/github/release/your-github-username/ha-unraid-connect.svg?style=for-the-badge
-[releases]: https://github.com/your-github-username/ha-unraid-connect/releases
+[releases-shield]: https://img.shields.io/github/release/domalab/ha-unraid-connect.svg?style=for-the-badge
+[releases]: https://github.com/domalab/ha-unraid-connect/releases
