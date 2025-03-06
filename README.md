@@ -219,21 +219,6 @@ Contributions to improve the integration are welcome! Whether it's:
 
 Please open an issue before making significant changes to discuss your ideas.
 
-### Development
-
-This integration uses standard Home Assistant patterns and follows these quality guidelines:
-
-- Type hints for all function parameters and return values
-- Full test suite for core functionality
-- Clean error handling and logging
-- Comprehensive documentation
-
-To set up a development environment:
-
-1. Clone the repository
-2. Install development dependencies: `pip install -r requirements-dev.txt`
-3. Run tests: `pytest`
-
 ## License
 
 This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.
