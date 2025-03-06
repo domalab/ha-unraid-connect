@@ -251,6 +251,6 @@ This integration is not officially affiliated with Lime Technology, Inc. or Unra
 [license]: LICENSE
 [license-shield]: https://img.shields.io/github/license/domalab/ha-unraid-connect?style=for-the-badge
 [quality-scale]: https://developers.home-assistant.io/docs/quality_scale
-[quality-scale-badge]: https://img.shields.io/badge/quality%20scale-silver-B8B8B8.svg?style=for-the-badge
+[quality-scale-badge]: https://img.shields.io/badge/quality%20scale-gold-FFD700.svg?style=for-the-badge
 [releases-shield]: https://img.shields.io/github/release/domalab/ha-unraid-connect.svg?style=for-the-badge
 [releases]: https://github.com/domalab/ha-unraid-connect/releases
