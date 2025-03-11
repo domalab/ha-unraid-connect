@@ -1,7 +1,5 @@
 # Unraid Connect Integration for Home Assistant
 
-[![GitHub Release][releases-shield]][releases]
-[![GitHub Activity][commits-shield]][commits]
 [![License][license-shield]][license]
 [![hacs][hacsbadge]][hacs]
 [![Quality Scale][quality-scale-badge]][quality-scale]
@@ -229,8 +227,6 @@ This integration is not officially affiliated with Lime Technology, Inc. or Unra
 
 ---
 
-[commits-shield]: https://img.shields.io/github/commit-activity/m/domalab/ha-unraid-connect?style=for-the-badge
-[commits]: https://github.com/domalab/ha-unraid-connect/commits/main
 [hacs]: https://hacs.xyz
 [hacsbadge]: https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge
 [license]: LICENSE
