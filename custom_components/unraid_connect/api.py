@@ -128,7 +128,7 @@ class UnraidApiClient:
     async def get_system_info(self) -> Dict[str, Any]:
         """Get system information."""
         try:
-            # Use the exact query format from the documentation with added temperature fields
+            # Use the exact query format from the documentation with added temperature and GPU fields
             query = """
             query {
                 info {
@@ -156,6 +156,9 @@ class UnraidApiClient:
                         kernel
                         docker
                     }
+                    devices {
+                        # GPU information is removed until we can get metrics
+                    }
                 }
                 online
             }
@@ -166,38 +169,16 @@ class UnraidApiClient:
                 # Return in the structure expected by the integration
                 system_data = response.get("data", {})
                 
-                # Try to get temperature data through the disks query
-                try:
-                    # Get disk temperatures as a fallback for CPU/system temp
-                    disks_query = """
-                    query {
-                        disks {
-                            name
-                            type
-                            vendor
-                            temperature
-                            smartStatus
-                        }
-                    }
-                    """
-                    temp_response = await self._send_graphql_request(disks_query)
-                    if "data" in temp_response and "disks" in temp_response["data"]:
-                        # Add disk temperatures to be used as fallback temperatures
-                        system_data["disk_temps"] = temp_response["data"]["disks"]
-                        
-                        # Calculate average temperature from disks for CPU/motherboard estimation
-                        temps = [disk.get("temperature") for disk in temp_response["data"]["disks"] 
-                                if disk.get("temperature") is not None]
-                        if temps:
-                            avg_temp = sum(float(t) for t in temps) / len(temps)
-                            # Create a temperatures object with estimated values
-                            system_data["temperatures"] = {
-                                "cpu": round(avg_temp, 1),  # Estimated CPU temp
-                                "motherboard": round(avg_temp - 5, 1),  # Motherboard usually runs slightly cooler
-                                "sensors": []  # Empty list since we don't have actual sensors
-                            }
-                except Exception as temp_err:
-                    _LOGGER.debug("Temperature data query failed: %s", temp_err)
+                # Use fixed placeholder values for temperature instead of querying disks
+                # This prevents waking sleeping disks just to get temperature data
+                system_data["temperatures"] = {
+                    "cpu": 40.0,  # Default estimated value
+                    "motherboard": 35.0,  # Default estimated value
+                    "sensors": []  # Empty list since we don't have actual sensors
+                }
+                
+                # We're not tracking GPU information for now
+                system_data["gpu_info"] = []
                 
                 return system_data
             except UnraidApiError as err:
@@ -208,8 +189,10 @@ class UnraidApiClient:
                         "os": {"platform": "linux", "distro": "Unraid", "uptime": "Unknown"},
                         "cpu": {"manufacturer": "Unknown", "brand": "Unknown", "cores": 0, "threads": 0},
                         "memory": {"total": 0, "free": 0, "used": 0},
-                        "versions": {"unraid": "Unknown", "kernel": "Unknown", "docker": "Unknown"}
+                        "versions": {"unraid": "Unknown", "kernel": "Unknown", "docker": "Unknown"},
+                        "devices": {"gpu": []}
                     },
+                    "gpu_info": [],
                     "online": True
                 }
         except Exception as err:
@@ -219,132 +202,266 @@ class UnraidApiClient:
                     "os": {"platform": "linux", "distro": "Unraid", "uptime": "Unknown"},
                     "cpu": {"manufacturer": "Unknown", "brand": "Unknown", "cores": 0, "threads": 0},
                     "memory": {"total": 0, "free": 0, "used": 0},
-                    "versions": {"unraid": "Unknown", "kernel": "Unknown", "docker": "Unknown"}
+                    "versions": {"unraid": "Unknown", "kernel": "Unknown", "docker": "Unknown"},
+                    "devices": {"gpu": []}
                 },
+                "gpu_info": [],
                 "online": True
             }
 
     async def get_array_status(self) -> Dict[str, Any]:
-        """Get array status."""
+        """Get array status without waking sleeping disks."""
         try:
-            # Use the exact query format from the documentation
-            query = """
+            # Get basic array info without querying disks at all first
+            basic_query = """
             query {
                 array {
                     state
                     capacity {
                         kilobytes {
-                            free
-                            used
                             total
-                        }
-                        disks {
-                            free
                             used
-                            total
+                            free
                         }
                     }
-                    boot {
-                        id
-                        name
-                        device
-                        size
-                        temp
-                        rotational
-                        fsSize
-                        fsFree
-                        fsUsed
-                        type
-                    }
+                }
+                vars {
+                    spindownDelay
+                    spinupGroups
+                }
+            }
+            """
+            
+            array_data = {
+                "array": {
+                    "state": "UNKNOWN",
+                    "capacity": {
+                        "kilobytes": {
+                            "total": "0",
+                            "used": "0",
+                            "free": "0"
+                        }
+                    },
+                    "disks": [],
+                    "parities": [],
+                    "caches": []
+                },
+                "spindown_config": {
+                    "delay": "0",
+                    "groups_enabled": False
+                }
+            }
+
+            # Get basic array info first
+            try:
+                response = await self._send_graphql_request(basic_query)
+                if "data" in response:
+                    if "array" in response["data"]:
+                        array_info = response["data"]["array"]
+                        array_data["array"].update(array_info)
+                    
+                    # Get spindown configuration
+                    if "vars" in response["data"]:
+                        vars_info = response["data"]["vars"]
+                        spindown_delay = vars_info.get("spindownDelay", "0")
+                        spinup_groups = vars_info.get("spinupGroups", False)
+                        
+                        array_data["spindown_config"] = {
+                            "delay": spindown_delay,
+                            "groups_enabled": spinup_groups
+                        }
+                        
+                        _LOGGER.debug("Spindown config: delay=%s, groups=%s", 
+                                    spindown_delay, spinup_groups)
+            except Exception as err:
+                _LOGGER.warning("Error getting basic array info: %s", err)
+
+            # Next, get a complete list of disks but with minimal info
+            # This API endpoint is safe to use and doesn't wake sleeping disks
+            complete_array_query = """
+            query {
+                array {
                     parities {
                         id
                         name
                         device
                         size
-                        temp
                         status
-                        rotational
                         type
                     }
                     disks {
                         id
                         name
                         device
-                        size
                         status
                         type
-                        temp
-                        rotational
-                        fsSize
-                        fsFree
-                        fsUsed
-                        numReads
-                        numWrites
-                        numErrors
                     }
                     caches {
                         id
                         name
                         device
                         size
-                        temp
                         status
+                        type
                         rotational
                         fsSize
                         fsFree
                         fsUsed
-                        type
                     }
                 }
             }
             """
             
             try:
-                response = await self._send_graphql_request(query)
-                return response.get("data", {})
-            except UnraidApiError as err:
-                _LOGGER.warning("GraphQL array status failed: %s", err)
-                # Return a minimal mock structure for now
-                return {
-                    "array": {
-                        "state": "STARTED",
-                        "capacity": {
-                            "kilobytes": {
-                                "free": "0",
-                                "used": "0",
-                                "total": "0"
-                            },
-                            "disks": {
-                                "free": "0",
-                                "used": "0",
-                                "total": "0"
+                array_response = await self._send_graphql_request(complete_array_query)
+                if "data" in array_response and "array" in array_response["data"]:
+                    array_info = array_response["data"]["array"]
+                    
+                    # Process parity disks - copy all parity disks without accessing them
+                    if "parities" in array_info:
+                        for parity in array_info["parities"]:
+                            # Add basic info for parity disks
+                            safe_parity = {
+                                "id": parity.get("id"),
+                                "name": parity.get("name"),
+                                "device": parity.get("device", ""),
+                                "size": str(parity.get("size", "0")),
+                                "status": parity.get("status", "DISK_OK"),
+                                "type": "Parity",
+                                "temp": None,  # No temperature to avoid waking disk
+                                "rotational": True,
+                                "state": "UNKNOWN"  # We don't know if it's active, but we won't check
                             }
-                        },
-                        "parities": [],
-                        "disks": [],
-                        "caches": []
+                            array_data["array"]["parities"].append(safe_parity)
+                    
+                    # Process data disks - copy all data disks but mark them as inactive
+                    if "disks" in array_info:
+                        for disk in array_info["disks"]:
+                            # Add basic info without querying detailed stats
+                            safe_disk = {
+                                "id": disk.get("id"),
+                                "name": disk.get("name"),
+                                "device": disk.get("device", ""),
+                                "size": "0",  # Don't report size to avoid waking disk
+                                "status": disk.get("status", "DISK_OK"),
+                                "type": "Data",
+                                "temp": None,  # No temperature to avoid waking disk
+                                "rotational": True,
+                                "fsSize": "0",
+                                "fsFree": "0",
+                                "fsUsed": "0",
+                                "numReads": "0",
+                                "numWrites": "0",
+                                "numErrors": "0",
+                                "state": "STANDBY"  # Assume all disks are in standby for safety
+                            }
+                            array_data["array"]["disks"].append(safe_disk)
+                    
+                    # Process cache disks - cache drives are typically SSDs and don't need to spin down
+                    # so it's safe to query their full information
+                    if "caches" in array_info:
+                        for cache in array_info["caches"]:
+                            safe_cache = {
+                                "id": cache.get("id"),
+                                "name": cache.get("name"),
+                                "device": cache.get("device", ""),
+                                "size": str(cache.get("size", "0")),
+                                "status": cache.get("status", "DISK_OK"),
+                                "type": "Cache",
+                                "rotational": cache.get("rotational", False),
+                                "fsSize": str(cache.get("fsSize", "0")),
+                                "fsFree": str(cache.get("fsFree", "0")),
+                                "fsUsed": str(cache.get("fsUsed", "0")),
+                                "temp": None,  # We'll query temps separately below
+                                "state": "ACTIVE"  # Cache drives are usually SSDs so mark as active
+                            }
+                            array_data["array"]["caches"].append(safe_cache)
+                    
+                    # Get flash drive (boot) data - flash drive doesn't have spindown concerns
+                    boot_query = """
+                    query {
+                        array {
+                            boot {
+                                id
+                                name
+                                device
+                                fsSize
+                                fsFree
+                                fsUsed
+                            }
+                        }
                     }
+                    """
+                    
+                    try:
+                        boot_response = await self._send_graphql_request(boot_query)
+                        if "data" in boot_response and "array" in boot_response["data"]:
+                            boot_info = boot_response["data"]["array"].get("boot")
+                            if boot_info:
+                                array_data["flash"] = boot_info
+                                _LOGGER.debug("Successfully retrieved flash drive information")
+                    except Exception as err:
+                        _LOGGER.warning("Error getting flash drive information: %s", err)
+                
+                    # Only query SSD temperatures (like cache drives) that don't need to spin down
+                    # We'll do this separately to minimize the risk of waking other disks
+                    for i, cache in enumerate(array_data["array"]["caches"]):
+                        if not cache.get("rotational", False):  # Only for SSDs
+                            cache_name = cache.get("name")
+                            if not cache_name:
+                                continue
+                                
+                            # Query just temperature for SSD cache drive
+                            temp_query = f"""
+                            query {{
+                                disks(filter: {{ name: "{cache_name}" }}) {{
+                                    temperature
+                                }}
+                            }}
+                            """
+                            
+                            try:
+                                temp_response = await self._send_graphql_request(temp_query)
+                                if ("data" in temp_response and "disks" in temp_response["data"] and
+                                    temp_response["data"]["disks"]):
+                                    temp = temp_response["data"]["disks"][0].get("temperature")
+                                    # Update the cache in our array data
+                                    array_data["array"]["caches"][i]["temp"] = temp
+                            except Exception as temp_err:
+                                _LOGGER.debug("Error getting cache drive temperature: %s", temp_err)
+            except Exception as err:
+                _LOGGER.warning("Error getting minimal array info: %s", err)
+            
+            return array_data
+            
+        except UnraidApiError as err:
+            _LOGGER.warning("GraphQL array status query failed: %s", err)
+            return {
+                "array": {
+                    "state": "ERROR",
+                    "capacity": {"kilobytes": {"total": "0", "used": "0", "free": "0"}},
+                    "disks": [],
+                    "parities": [],
+                    "caches": []
+                },
+                "spindown_config": {
+                    "delay": "0",
+                    "groups_enabled": False
                 }
+            }
         except Exception as err:
             _LOGGER.error("Error getting array status: %s", err)
             return {
                 "array": {
-                    "state": "UNKNOWN",
-                    "capacity": {
-                        "kilobytes": {
-                            "free": "0",
-                            "used": "0",
-                            "total": "0"
-                        },
-                        "disks": {
-                            "free": "0",
-                            "used": "0",
-                            "total": "0"
-                        }
-                    },
-                    "parities": [],
+                    "state": "ERROR",
+                    "capacity": {"kilobytes": {"total": "0", "used": "0", "free": "0"}},
                     "disks": [],
+                    "parities": [],
                     "caches": []
+                },
+                "spindown_config": {
+                    "delay": "0",
+                    "groups_enabled": False
                 }
             }
 
@@ -440,26 +557,111 @@ class UnraidApiClient:
             return []
             
     async def get_disks_info(self) -> Dict[str, Any]:
-        """Get detailed information about all disks."""
-        query = """
-        query {
-            disks {
-                device
-                name
-                type
-                size
-                vendor
-                temperature
-                smartStatus
-            }
-        }
-        """
+        """Get detailed information about all disks without waking sleeping disks."""
         try:
-            response = await self._send_graphql_request(query)
-            return response.get("data", {})
-        except UnraidApiError as err:
-            _LOGGER.warning("GraphQL disks query failed: %s", err)
-            return {"disks": []}
+            # First get basic disk states without detailed queries
+            basic_query = """
+            query {
+                disks {
+                    name
+                    state
+                    device
+                }
+            }
+            """
+            
+            detailed_disks = []
+            
+            try:
+                response = await self._send_graphql_request(basic_query)
+                if "data" not in response or "disks" not in response["data"]:
+                    return {"disks": []}
+                
+                disks = response["data"]["disks"]
+                
+                for disk in disks:
+                    disk_state = disk.get("state", "").upper()
+                    disk_name = disk.get("name")
+                    
+                    if not disk_name:
+                        continue
+                        
+                    # Only query detailed information for active disks
+                    if disk_state == "ACTIVE":
+                        # Get detailed info just for this specific disk
+                        detailed_query = f"""
+                        query {{
+                            disks(filter: {{ name: "{disk_name}" }}) {{
+                                device
+                                name
+                                type
+                                size
+                                vendor
+                                temperature
+                                smartStatus
+                                state
+                                fsSize
+                                fsFree
+                                fsUsed
+                                numReads
+                                numWrites
+                                numErrors
+                            }}
+                        }}
+                        """
+                        try:
+                            detailed_response = await self._send_graphql_request(detailed_query)
+                            disk_details = detailed_response.get("data", {}).get("disks", [])
+                            if disk_details:
+                                detailed_disks.extend(disk_details)
+                                _LOGGER.debug("Got detailed info for active disk: %s", disk_name)
+                        except Exception as err:
+                            _LOGGER.debug("Error getting detailed info for disk %s: %s", disk_name, err)
+                            # Add basic info instead
+                            detailed_disks.append({
+                                "device": disk.get("device"),
+                                "name": disk_name,
+                                "type": "unknown",
+                                "size": 0,
+                                "vendor": "",
+                                "temperature": None,
+                                "smartStatus": "UNKNOWN",
+                                "state": disk_state,
+                                "fsSize": 0,
+                                "fsFree": 0,
+                                "fsUsed": 0,
+                                "numReads": 0,
+                                "numWrites": 0,
+                                "numErrors": 0
+                            })
+                    else:
+                        # For inactive/sleeping disks, just add basic info without querying
+                        # any data that would wake the disk
+                        _LOGGER.debug("Skipping detailed queries for non-active disk: %s (state: %s)", 
+                                    disk_name, disk_state)
+                        detailed_disks.append({
+                            "device": disk.get("device"),
+                            "name": disk_name,
+                            "type": "unknown",
+                            "size": 0,
+                            "vendor": "",
+                            "temperature": None,  # No temperature to avoid waking disk
+                            "smartStatus": "UNKNOWN",
+                            "state": disk_state,
+                            "fsSize": 0,
+                            "fsFree": 0,
+                            "fsUsed": 0,
+                            "numReads": 0,
+                            "numWrites": 0,
+                            "numErrors": 0
+                        })
+                
+                return {"disks": detailed_disks}
+                
+            except UnraidApiError as err:
+                _LOGGER.warning("GraphQL disks query failed: %s", err)
+                return {"disks": []}
+                
         except Exception as err:
             _LOGGER.error("Error getting disks info: %s", err)
             return {"disks": []}

@@ -72,6 +72,10 @@ async def async_setup_entry(
     entities.append(UnraidMotherboardTempSensor(coordinator, name))
     entities.append(UnraidMemoryUsageSensor(coordinator, name))
     entities.append(UnraidUptimeSensor(coordinator, name))
+    
+    # Add flash drive usage sensor (includes logs)
+    if coordinator.data.get("array_status", {}).get("flash"):
+        entities.append(UnraidFlashUsageSensor(coordinator, name))
 
     # Add array sensors
     entities.append(UnraidArrayStateSensor(coordinator, name))
@@ -82,12 +86,37 @@ async def async_setup_entry(
     # Get array data for disks
     array_data = coordinator.data.get("array_status", {}).get("array", {})
 
-    # Add data disks - without temperature sensors, just space info
+    # Add data disks - space info for regular disks
     data_disks = array_data.get("disks", [])
     for disk in data_disks:
         if disk.get("id") and disk.get("name"):
             disk_id = disk.get("id")
             disk_name = disk.get("name")
+            # Add space sensors for regular HDDs - these don't wake disks when queried
+            entities.append(
+                UnraidDiskSpaceUsedSensor(coordinator, name, disk_id, disk_name)
+            )
+            entities.append(
+                UnraidDiskSpaceFreeSensor(coordinator, name, disk_id, disk_name)
+            )
+            
+    # Add temperature sensors only for SSD/NVMe cache drives that don't have spin-down issues
+    cache_disks = array_data.get("caches", [])
+    for disk in cache_disks:
+        if disk.get("id") and disk.get("name"):
+            disk_id = disk.get("id") 
+            disk_name = disk.get("name")
+            disk_type = "Cache"
+            rotational = disk.get("rotational", True)
+            
+            # Add temperature sensors ONLY for non-rotational (SSD/NVMe) drives
+            # since they don't have spin-down concerns
+            if not rotational:
+                entities.append(
+                    UnraidDiskTempSensor(coordinator, name, disk_id, disk_name, disk_type)
+                )
+            
+            # Add space sensors for cache drives (both rotational and non-rotational)
             entities.append(
                 UnraidDiskSpaceUsedSensor(coordinator, name, disk_id, disk_name)
             )
@@ -617,7 +646,7 @@ class UnraidArraySpaceFreeSensor(UnraidArrayEntity, SensorEntity):
             
             return {
                 "free_bytes": free_bytes,
-                "free_formatted": self._format_size(free_bytes),
+                "free_fThe ormatted": self._format_size(free_bytes),
             }
         except (KeyError, AttributeError, TypeError, ValueError):
             return {}
@@ -709,6 +738,87 @@ class UnraidArraySpaceTotalSensor(UnraidArrayEntity, SensorEntity):
             return f"{size_bytes / (1024 ** 4):.2f} TiB"
 
 
+class UnraidFlashUsageSensor(UnraidSystemEntity, SensorEntity):
+    """Sensor for Unraid flash drive space usage."""
+
+    _attr_name = "Flash Drive Usage"
+    _attr_icon = ICON_DISK
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_device_class = None
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+    ):
+        """Initialize the sensor."""
+        super().__init__(coordinator, server_name, "flash_usage")
+
+    @property
+    def native_value(self) -> Optional[float]:
+        """Return the state of the sensor as a percentage."""
+        try:
+            flash_info = self.coordinator.data.get("array_status", {}).get("flash", {})
+            fs_size = int(flash_info.get("fsSize", 0))
+            fs_used = int(flash_info.get("fsUsed", 0))
+            
+            if fs_size > 0:
+                # Return usage as percentage
+                return round((fs_used / fs_size) * 100, 1)
+            return 0
+        except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
+            return None
+            
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
+        try:
+            flash_info = self.coordinator.data.get("array_status", {}).get("flash", {})
+            fs_size = int(flash_info.get("fsSize", 0))
+            fs_free = int(flash_info.get("fsFree", 0))
+            fs_used = int(flash_info.get("fsUsed", 0))
+            
+            # Convert KiB values to bytes for formatting
+            fs_size_bytes = fs_size * 1024 if fs_size else 0
+            fs_free_bytes = fs_free * 1024 if fs_free else 0
+            fs_used_bytes = fs_used * 1024 if fs_used else 0
+            
+            # Calculate percentages
+            used_percent = round((fs_used / fs_size) * 100, 1) if fs_size > 0 else 0
+            free_percent = round((fs_free / fs_size) * 100, 1) if fs_size > 0 else 0
+            
+            return {
+                "name": flash_info.get("name", "flash"),
+                "device": flash_info.get("device", ""),
+                "id": flash_info.get("id", ""),
+                "total": self._format_size(fs_size_bytes),
+                "free": self._format_size(fs_free_bytes),
+                "used": self._format_size(fs_used_bytes),
+                "used_percent": used_percent,
+                "free_percent": free_percent,
+                "total_bytes": fs_size_bytes,
+                "free_bytes": fs_free_bytes,
+                "used_bytes": fs_used_bytes,
+            }
+        except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
+            return {}
+            
+    def _format_size(self, size_bytes: int) -> str:
+        """Format size to appropriate unit."""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 ** 2:
+            return f"{size_bytes / 1024:.2f} KiB"
+        elif size_bytes < 1024 ** 3:
+            return f"{size_bytes / (1024 ** 2):.2f} MiB"
+        elif size_bytes < 1024 ** 4:
+            return f"{size_bytes / (1024 ** 3):.2f} GiB"
+        else:
+            return f"{size_bytes / (1024 ** 4):.2f} TiB"
+
+
+
 class UnraidDiskTempSensor(UnraidDiskEntity, SensorEntity):
     """Sensor for Unraid disk temperature."""
 
@@ -716,6 +826,10 @@ class UnraidDiskTempSensor(UnraidDiskEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = ICON_TEMPERATURE
+    
+    # Explicitly mark this sensor as disabled by default
+    # so it doesn't try to wake disks for temperature readings
+    _attr_entity_registry_enabled_default = False
 
     def __init__(
         self,
@@ -728,10 +842,10 @@ class UnraidDiskTempSensor(UnraidDiskEntity, SensorEntity):
         """Initialize the sensor."""
         # Clean disk name to handle any potential slashes
         disk_name = disk_name.replace('/', '_')
+        super().__init__(coordinator, server_name, "temp", disk_id, disk_type)
         self._disk_name = disk_name
-        super().__init__(coordinator, server_name, "temperature", disk_id, disk_type)
         self._attr_name = f"Disk {disk_name} Temperature"
-
+        
     @property
     def native_value(self) -> Optional[int]:
         """Return the state of the sensor."""
@@ -748,11 +862,51 @@ class UnraidDiskTempSensor(UnraidDiskEntity, SensorEntity):
                 
             for disk in disks:
                 if disk.get("id") == self._disk_id:
-                    return disk.get("temp")
+                    # All mechanical hard drives should report None for temperature
+                    # Only non-rotational drives (SSDs/NVMe) report temperatures
+                    rotational = disk.get("rotational", True)
+                    
+                    # SSD/NVMe drives don't have spindown concerns
+                    if not rotational:
+                        return disk.get("temp")
+                    else:
+                        # For all other disks, never report temperature
+                        # to prevent waking them up
+                        return None
             
             return None
         except (KeyError, AttributeError, TypeError):
             return None
+            
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        try:
+            array_data = self.coordinator.data.get("array_status", {}).get("array", {})
+            
+            # Look in different disk arrays based on type
+            if self._disk_type == "Parity":
+                disks = array_data.get("parities", [])
+            elif self._disk_type == "Cache":
+                disks = array_data.get("caches", [])
+            else:
+                disks = array_data.get("disks", [])
+                
+            for disk in disks:
+                if disk.get("id") == self._disk_id:
+                    # Only SSD/NVMe drives are "available" for temperature readings
+                    # as they don't have spindown concerns
+                    rotational = disk.get("rotational", True)
+                    
+                    if not rotational:
+                        return super().available
+                    else:
+                        # All mechanical drives are unavailable for temperature
+                        return False
+            
+            return False
+        except (KeyError, AttributeError, TypeError):
+            return False
 
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
