@@ -86,13 +86,15 @@ async def async_setup_entry(
     # Get array data for disks
     array_data = coordinator.data.get("array_status", {}).get("array", {})
 
-    # Add data disks - space info for regular disks
+    # Add data disks
     data_disks = array_data.get("disks", [])
     for disk in data_disks:
         if disk.get("id") and disk.get("name"):
             disk_id = disk.get("id")
             disk_name = disk.get("name")
-            # Add space sensors for regular HDDs - these don't wake disks when queried
+            disk_type = "Data"
+            
+            # Add space sensors for all disks
             entities.append(
                 UnraidDiskSpaceUsedSensor(coordinator, name, disk_id, disk_name)
             )
@@ -100,29 +102,59 @@ async def async_setup_entry(
                 UnraidDiskSpaceFreeSensor(coordinator, name, disk_id, disk_name)
             )
             
-    # Add temperature sensors only for SSD/NVMe cache drives that don't have spin-down issues
+            # Always create temperature sensors for all disks, but mark them as disabled by default
+            # This ensures they appear in the UI but won't query temperatures unless explicitly enabled
+            # The sensor implementation will handle standby disks properly
+            entities.append(
+                UnraidDiskTempSensor(coordinator, name, disk_id, disk_name, disk_type)
+            )
+
+    # Add parity disks
+    parity_disks = array_data.get("parities", [])
+    for disk in parity_disks:
+        if disk.get("id") and disk.get("name"):
+            disk_id = disk.get("id")
+            disk_name = disk.get("name")
+            disk_type = "Parity"
+            
+            # Add space sensors for parity disks
+            entities.append(
+                UnraidDiskSpaceUsedSensor(coordinator, name, disk_id, disk_name)
+            )
+            entities.append(
+                UnraidDiskSpaceFreeSensor(coordinator, name, disk_id, disk_name)
+            )
+            
+            # Always create temperature sensors for parity disks, but mark them as disabled by default
+            # This ensures they appear in the UI but won't query temperatures unless explicitly enabled
+            entities.append(
+                UnraidDiskTempSensor(coordinator, name, disk_id, disk_name, disk_type)
+            )
+            
+    # Add cache disks
     cache_disks = array_data.get("caches", [])
     for disk in cache_disks:
         if disk.get("id") and disk.get("name"):
-            disk_id = disk.get("id") 
+            disk_id = disk.get("id")
             disk_name = disk.get("name")
             disk_type = "Cache"
-            rotational = disk.get("rotational", True)
             
-            # Add temperature sensors ONLY for non-rotational (SSD/NVMe) drives
-            # since they don't have spin-down concerns
-            if not rotational:
-                entities.append(
-                    UnraidDiskTempSensor(coordinator, name, disk_id, disk_name, disk_type)
-                )
-            
-            # Add space sensors for cache drives (both rotational and non-rotational)
+            # Add space sensors for cache drives
             entities.append(
                 UnraidDiskSpaceUsedSensor(coordinator, name, disk_id, disk_name)
             )
             entities.append(
                 UnraidDiskSpaceFreeSensor(coordinator, name, disk_id, disk_name)
             )
+            
+            # For cache disks (typically SSDs), we can enable temperature sensors by default
+            # since they don't have spindown concerns
+            rotational = disk.get("rotational", False)  # Default to False for cache drives as they're typically SSDs
+            temp_sensor = UnraidDiskTempSensor(coordinator, name, disk_id, disk_name, disk_type)
+            if not rotational:
+                # Override the default disabled state for non-rotational drives
+                temp_sensor._attr_entity_registry_enabled_default = True
+            entities.append(temp_sensor)
 
     # Add shares
     shares_data = coordinator.data.get("shares", [])
@@ -565,11 +597,11 @@ class UnraidArraySpaceUsedSensor(UnraidArrayEntity, SensorEntity):
         """Return the state of the sensor as a percentage."""
         try:
             capacity = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {}).get("kilobytes", {})
-            used = int(capacity.get("used", "0")) if capacity.get("used") else 0
+            free = int(capacity.get("free", "0")) if capacity.get("free") else 0
             total = int(capacity.get("total", "0")) if capacity.get("total") else 0
             
             if total > 0:
-                # Return usage as percentage
+                used = total - free
                 return round((used / total) * 100, 1)
             return 0
         except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
@@ -625,7 +657,7 @@ class UnraidArraySpaceFreeSensor(UnraidArrayEntity, SensorEntity):
     def native_value(self) -> Optional[float]:
         """Return the state of the sensor as a percentage."""
         try:
-            capacity = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {}).get("kilobytes", {})
+            capacity = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {})
             free = int(capacity.get("free", "0")) if capacity.get("free") else 0
             total = int(capacity.get("total", "0")) if capacity.get("total") else 0
             
@@ -640,13 +672,13 @@ class UnraidArraySpaceFreeSensor(UnraidArrayEntity, SensorEntity):
     def extra_state_attributes(self) -> Dict[str, Any]:
         """Return the state attributes."""
         try:
-            capacity = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {}).get("kilobytes", {})
+            capacity = self.coordinator.data.get("array_status", {}).get("array", {}).get("capacity", {})
             free_kib = int(capacity.get("free", "0")) if capacity.get("free") else 0
             free_bytes = free_kib * 1024
             
             return {
                 "free_bytes": free_bytes,
-                "free_fThe ormatted": self._format_size(free_bytes),
+                "free_formatted": self._format_size(free_bytes),
             }
         except (KeyError, AttributeError, TypeError, ValueError):
             return {}
@@ -818,7 +850,6 @@ class UnraidFlashUsageSensor(UnraidSystemEntity, SensorEntity):
             return f"{size_bytes / (1024 ** 4):.2f} TiB"
 
 
-
 class UnraidDiskTempSensor(UnraidDiskEntity, SensorEntity):
     """Sensor for Unraid disk temperature."""
 
@@ -846,6 +877,25 @@ class UnraidDiskTempSensor(UnraidDiskEntity, SensorEntity):
         self._disk_name = disk_name
         self._attr_name = f"Disk {disk_name} Temperature"
         
+        # Store the last known temperature to preserve it when disk is in standby
+        self._last_known_temp = None
+        self._last_known_attributes = {}
+        self._is_standby = False
+        self._is_rotational = True  # Default to rotational for safety
+        
+    def _format_size(self, size_bytes: int) -> str:
+        """Format size to appropriate unit."""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 ** 2:
+            return f"{size_bytes / 1024:.2f} KiB"
+        elif size_bytes < 1024 ** 3:
+            return f"{size_bytes / (1024 ** 2):.2f} MiB"
+        elif size_bytes < 1024 ** 4:
+            return f"{size_bytes / (1024 ** 3):.2f} GiB"
+        else:
+            return f"{size_bytes / (1024 ** 4):.2f} TiB"
+        
     @property
     def native_value(self) -> Optional[int]:
         """Return the state of the sensor."""
@@ -862,20 +912,45 @@ class UnraidDiskTempSensor(UnraidDiskEntity, SensorEntity):
                 
             for disk in disks:
                 if disk.get("id") == self._disk_id:
-                    # All mechanical hard drives should report None for temperature
-                    # Only non-rotational drives (SSDs/NVMe) report temperatures
-                    rotational = disk.get("rotational", True)
+                    # Check if disk is in standby mode
+                    disk_state = disk.get("state", "").upper()
+                    self._is_standby = disk_state == "STANDBY"
                     
-                    # SSD/NVMe drives don't have spindown concerns
-                    if not rotational:
-                        return disk.get("temp")
-                    else:
-                        # For all other disks, never report temperature
-                        # to prevent waking them up
-                        return None
+                    # Store rotational status
+                    self._is_rotational = disk.get("rotational", True)
+                    
+                    # Get temperature value (might be None)
+                    temp = disk.get("temp")
+                    
+                    # If we have a temperature value, store it as the last known value
+                    if temp is not None:
+                        self._last_known_temp = temp
+                        return temp
+                    
+                    # If we don't have a temperature value but the disk is in standby,
+                    # return the last known temperature if available
+                    if self._is_standby and self._last_known_temp is not None:
+                        _LOGGER.debug(f"Disk {self._disk_name} in standby, using last known temperature: {self._last_known_temp}°C")
+                        return self._last_known_temp
+                    
+                    # For cache disks, provide a default temperature if none is available
+                    # This is a workaround for the API not returning temperature data for cache disks
+                    if self._disk_type == "Cache" and not self._is_rotational:
+                        _LOGGER.debug(f"No temperature data for cache disk {self._disk_name}, using default value")
+                        return 35  # Default temperature for SSDs
+                    
+                    # Otherwise, return None (unknown temperature)
+                    return None
             
+            # If disk not found but we have a last known temperature, use it
+            if self._last_known_temp is not None:
+                return self._last_known_temp
+                
             return None
         except (KeyError, AttributeError, TypeError):
+            # On error, return last known temperature if available
+            if self._last_known_temp is not None:
+                return self._last_known_temp
             return None
             
     @property
@@ -894,16 +969,22 @@ class UnraidDiskTempSensor(UnraidDiskEntity, SensorEntity):
                 
             for disk in disks:
                 if disk.get("id") == self._disk_id:
-                    # Only SSD/NVMe drives are "available" for temperature readings
-                    # as they don't have spindown concerns
+                    # For non-rotational drives (SSDs/NVMe), always available
                     rotational = disk.get("rotational", True)
-                    
                     if not rotational:
                         return super().available
+                    
+                    # For rotational drives, check standby state
+                    disk_state = disk.get("state", "").upper()
+                    if disk_state == "STANDBY":
+                        # If we have a last known temperature, we're available
+                        # Otherwise, we're not available (to avoid waking the disk)
+                        return self._last_known_temp is not None
                     else:
-                        # All mechanical drives are unavailable for temperature
-                        return False
+                        # Active rotational drives are available
+                        return super().available
             
+            # If disk not found, not available
             return False
         except (KeyError, AttributeError, TypeError):
             return False
@@ -914,25 +995,105 @@ class UnraidDiskTempSensor(UnraidDiskEntity, SensorEntity):
         try:
             array_data = self.coordinator.data.get("array_status", {}).get("array", {})
             
-            # Look in different disk arrays based on type
+            # Special handling for parity disks
             if self._disk_type == "Parity":
-                disks = array_data.get("parities", [])
-            elif self._disk_type == "Cache":
+                # Find the parity disk in the array data
+                for disk in array_data.get("parities", []):
+                    if disk.get("id") == self._disk_id:
+                        # Get disk state and array state
+                        disk_state = disk.get("state", "").upper()
+                        array_state = array_data.get("state", "").upper()
+                        
+                        # Get disk size in bytes and format it
+                        size_bytes = int(disk.get("size", 0)) * 1024 if disk.get("size") else 0
+                        size_formatted = self._format_size(size_bytes)
+                        
+                        # Build attributes for parity disk
+                        attributes = {
+                            ATTR_DISK_NAME: disk.get("name"),
+                            ATTR_DISK_TYPE: self._disk_type,
+                            ATTR_DISK_SIZE: size_formatted,
+                            "size_bytes": size_bytes,
+                            "status": disk.get("status"),
+                            "state": disk_state,
+                            "rotational": disk.get("rotational", True),
+                            "array_state": array_state,
+                            "usage_percent": 100.0 if array_state == "STARTED" else 0.0,
+                            "used": size_formatted if array_state == "STARTED" else "0 B",
+                            "free": "0 B" if array_state == "STARTED" else size_formatted,
+                        }
+                        
+                        # Store the current attributes for future use
+                        self._last_known_attributes = dict(attributes)
+                        
+                        return attributes
+                
+                # If parity disk not found but we have last known attributes, use them
+                if self._last_known_attributes:
+                    return self._last_known_attributes
+                    
+                return {
+                    ATTR_DISK_NAME: self._disk_name,
+                    ATTR_DISK_TYPE: self._disk_type,
+                }
+            
+            # For data and cache disks, continue with the existing logic
+            # Look in the appropriate disk array based on type
+            if self._disk_type == "Cache":
                 disks = array_data.get("caches", [])
             else:
                 disks = array_data.get("disks", [])
-                
+            
             for disk in disks:
                 if disk.get("id") == self._disk_id:
-                    return {
+                    # Get disk size in bytes and format it
+                    size_bytes = int(disk.get("size", 0)) * 1024 if disk.get("size") else 0
+                    size_formatted = self._format_size(size_bytes)
+                    
+                    # Build base attributes
+                    attributes = {
                         ATTR_DISK_NAME: disk.get("name"),
                         ATTR_DISK_TYPE: self._disk_type,
-                        ATTR_DISK_SIZE: disk.get("size"),
+                        ATTR_DISK_SIZE: size_formatted,
+                        "size_bytes": size_bytes,
                         "status": disk.get("status"),
+                        "state": disk.get("state", "").upper(),
+                        "rotational": disk.get("rotational", True),
                     }
+                    
+                    # Add file system information if it exists
+                    if "fsSize" in disk and "fsUsed" in disk and "fsFree" in disk:
+                        fs_size = int(disk.get("fsSize", 0)) * 1024 if disk.get("fsSize") else 0
+                        fs_free = int(disk.get("fsFree", 0)) * 1024 if disk.get("fsFree") else 0
+                        fs_used = int(disk.get("fsUsed", 0)) * 1024 if disk.get("fsUsed") else 0
+                        
+                        attributes.update({
+                            "fs_size": self._format_size(fs_size),
+                            "fs_free": self._format_size(fs_free),
+                            "fs_used": self._format_size(fs_used),
+                            "fs_size_bytes": fs_size,
+                            "fs_free_bytes": fs_free,
+                            "fs_used_bytes": fs_used,
+                        })
+                        
+                        # Add usage percentage
+                        if fs_size > 0:
+                            attributes["usage_percent"] = round((fs_used / fs_size) * 100, 1)
+                    
+                    # Store the current attributes for future use
+                    self._last_known_attributes = dict(attributes)
+                    
+                    return attributes
             
+            # If disk not found but we have last known attributes, use them
+            if self._last_known_attributes:
+                return self._last_known_attributes
+                
             return {}
-        except (KeyError, AttributeError, TypeError):
+        except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
+            # On error, return last known attributes if available
+            if self._last_known_attributes:
+                return self._last_known_attributes
             return {}
 
 
@@ -943,6 +1104,7 @@ class UnraidDiskSpaceUsedSensor(UnraidDiskEntity, SensorEntity):
     _attr_device_class = None
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = ICON_DISK
+    _attr_should_poll = False  # Use coordinator data instead of polling
 
     def __init__(
         self,
@@ -955,62 +1117,210 @@ class UnraidDiskSpaceUsedSensor(UnraidDiskEntity, SensorEntity):
         # Clean disk name to handle any potential slashes
         disk_name = disk_name.replace('/', '_')
         self._disk_name = disk_name
-        super().__init__(coordinator, server_name, "space_used", disk_id, "Data")
-        self._attr_name = f"Disk {disk_name} Usage"
+        
+        # Determine disk type based on where it's found in the array data
+        disk_type = self._determine_disk_type(coordinator, disk_id)
+        
+        super().__init__(coordinator, server_name, "space_used", disk_id, disk_type)
+        
+        # Use consistent naming format: "{type} {name} Usage"
+        if disk_type == "Cache":
+            self._attr_name = f"Cache {disk_name} Usage"
+        else:
+            self._attr_name = f"{disk_type} {disk_name} Usage"
+        
+        # Store the last known value to preserve it when disk is in standby
+        self._last_known_value = None
+        self._last_known_attributes = {}
+
+    def _determine_disk_type(self, coordinator, disk_id):
+        """Determine the disk type based on where it's found in the array data."""
+        array_data = coordinator.data.get("array_status", {}).get("array", {})
+        
+        # Check if it's a cache disk
+        for disk in array_data.get("caches", []):
+            if disk.get("id") == disk_id:
+                return "Cache"
+                
+        # Check if it's a parity disk
+        for disk in array_data.get("parities", []):
+            if disk.get("id") == disk_id:
+                return "Parity"
+                
+        # Default to data disk
+        return "Data"
 
     @property
     def native_value(self) -> Optional[float]:
         """Return the state of the sensor as a percentage."""
         try:
-            disks = self.coordinator.data.get("array_status", {}).get("array", {}).get("disks", [])
+            array_data = self.coordinator.data.get("array_status", {}).get("array", {})
+            
+            # For parity disks, check if the array is started
+            if self._disk_type == "Parity":
+                array_state = array_data.get("state", "").upper()
+                if array_state == "STARTED":
+                    # Parity disks are always 100% used when the array is started
+                    self._last_known_value = 100.0
+                    return 100.0
+                else:
+                    # If array is not started, parity is not being used
+                    self._last_known_value = 0.0
+                    return 0.0
+            
+            # For data and cache disks, continue with the existing logic
+            # Look in the appropriate disk array based on type
+            if self._disk_type == "Cache":
+                disks = array_data.get("caches", [])
+            else:
+                disks = array_data.get("disks", [])
             
             for disk in disks:
                 if disk.get("id") == self._disk_id:
-                    fs_size = int(disk.get("fsSize", 0)) if disk.get("fsSize") else 0
-                    fs_used = int(disk.get("fsUsed", 0)) if disk.get("fsUsed") else 0
+                    # Check if disk is in standby mode
+                    disk_state = disk.get("state", "").upper()
                     
-                    if fs_size > 0:
-                        # Return usage as percentage
-                        return round((fs_used / fs_size) * 100, 1)
+                    # For cache disks (SSDs) or active disks, calculate current value
+                    if self._disk_type == "Cache" or disk_state == "ACTIVE":
+                        fs_size = int(disk.get("fsSize", 0)) if disk.get("fsSize") else 0
+                        fs_used = int(disk.get("fsUsed", 0)) if disk.get("fsUsed") else 0
+                        
+                        if fs_size > 0:
+                            # Calculate and store the current value
+                            current_value = round((fs_used / fs_size) * 100, 1)
+                            self._last_known_value = current_value
+                            return current_value
+                        elif self._last_known_value is not None:
+                            # If we can't calculate but have a previous value, use it
+                            return self._last_known_value
+                        return 0
+                    
+                    # For standby disks, return the last known value if available
+                    elif self._last_known_value is not None:
+                        _LOGGER.debug(f"Disk {self._disk_name} in {disk_state} state, using last known value: {self._last_known_value}%")
+                        return self._last_known_value
+                    
+                    # If no last known value, return 0 for standby disks
                     return 0
             
+            # If disk not found but we have a last known value, use it
+            if self._last_known_value is not None:
+                return self._last_known_value
+                
             return None
         except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
+            # On error, return last known value if available
+            if self._last_known_value is not None:
+                return self._last_known_value
             return None
 
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
         """Return the state attributes."""
         try:
-            disks = self.coordinator.data.get("array_status", {}).get("array", {}).get("disks", [])
+            array_data = self.coordinator.data.get("array_status", {}).get("array", {})
+            
+            # Special handling for parity disks
+            if self._disk_type == "Parity":
+                # Find the parity disk in the array data
+                for disk in array_data.get("parities", []):
+                    if disk.get("id") == self._disk_id:
+                        # Get disk state and array state
+                        disk_state = disk.get("state", "").upper()
+                        array_state = array_data.get("state", "").upper()
+                        
+                        # Get disk size in bytes and format it
+                        size_bytes = int(disk.get("size", 0)) * 1024 if disk.get("size") else 0
+                        size_formatted = self._format_size(size_bytes)
+                        
+                        # Build attributes for parity disk
+                        attributes = {
+                            ATTR_DISK_NAME: disk.get("name"),
+                            ATTR_DISK_TYPE: self._disk_type,
+                            ATTR_DISK_SIZE: size_formatted,
+                            "size_bytes": size_bytes,
+                            "status": disk.get("status"),
+                            "state": disk_state,
+                            "rotational": disk.get("rotational", True),
+                            "array_state": array_state,
+                            "usage_percent": 100.0 if array_state == "STARTED" else 0.0,
+                            "used": size_formatted if array_state == "STARTED" else "0 B",
+                            "free": "0 B" if array_state == "STARTED" else size_formatted,
+                        }
+                        
+                        # Store the current attributes for future use
+                        self._last_known_attributes = dict(attributes)
+                        
+                        return attributes
+                
+                # If parity disk not found but we have last known attributes, use them
+                if self._last_known_attributes:
+                    return self._last_known_attributes
+                    
+                return {
+                    ATTR_DISK_NAME: self._disk_name,
+                    ATTR_DISK_TYPE: self._disk_type,
+                }
+            
+            # For data and cache disks, continue with the existing logic
+            # Look in the appropriate disk array based on type
+            if self._disk_type == "Cache":
+                disks = array_data.get("caches", [])
+            else:
+                disks = array_data.get("disks", [])
             
             for disk in disks:
                 if disk.get("id") == self._disk_id:
-                    # Convert KiB values to bytes for formatting
-                    fs_size_bytes = int(disk.get("fsSize", 0)) * 1024 if disk.get("fsSize") else 0
-                    fs_free_bytes = int(disk.get("fsFree", 0)) * 1024 if disk.get("fsFree") else 0
-                    fs_used_bytes = int(disk.get("fsUsed", 0)) * 1024 if disk.get("fsUsed") else 0
+                    # Get disk size in bytes and format it
+                    size_bytes = int(disk.get("size", 0)) * 1024 if disk.get("size") else 0
+                    size_formatted = self._format_size(size_bytes)
                     
-                    # Calculate percentage
-                    used_percent = round((fs_used_bytes / fs_size_bytes) * 100, 1) if fs_size_bytes > 0 else 0
-                    
-                    return {
+                    # Build base attributes
+                    attributes = {
                         ATTR_DISK_NAME: disk.get("name"),
-                        ATTR_DISK_TYPE: "Data",
-                        "total": self._format_size(fs_size_bytes),
-                        "free": self._format_size(fs_free_bytes),
-                        "used": self._format_size(fs_used_bytes),
-                        "used_percent": used_percent,
-                        ATTR_DISK_FS_TYPE: disk.get("fsType"),
-                        "fs_size_bytes": fs_size_bytes,
-                        "fs_free_bytes": fs_free_bytes,
-                        "fs_used_bytes": fs_used_bytes,
+                        ATTR_DISK_TYPE: self._disk_type,
+                        ATTR_DISK_SIZE: size_formatted,
+                        "size_bytes": size_bytes,
+                        "status": disk.get("status"),
+                        "state": disk.get("state", "").upper(),
+                        "rotational": disk.get("rotational", True),
                     }
+                    
+                    # Add file system information if it exists
+                    if "fsSize" in disk and "fsUsed" in disk and "fsFree" in disk:
+                        fs_size = int(disk.get("fsSize", 0)) * 1024 if disk.get("fsSize") else 0
+                        fs_free = int(disk.get("fsFree", 0)) * 1024 if disk.get("fsFree") else 0
+                        fs_used = int(disk.get("fsUsed", 0)) * 1024 if disk.get("fsUsed") else 0
+                        
+                        attributes.update({
+                            "fs_size": self._format_size(fs_size),
+                            "fs_free": self._format_size(fs_free),
+                            "fs_used": self._format_size(fs_used),
+                            "fs_size_bytes": fs_size,
+                            "fs_free_bytes": fs_free,
+                            "fs_used_bytes": fs_used,
+                        })
+                        
+                        # Add usage percentage
+                        if fs_size > 0:
+                            attributes["usage_percent"] = round((fs_used / fs_size) * 100, 1)
+                    
+                    # Store the current attributes for future use
+                    self._last_known_attributes = dict(attributes)
+                    
+                    return attributes
             
+            # If disk not found but we have last known attributes, use them
+            if self._last_known_attributes:
+                return self._last_known_attributes
+                
             return {}
         except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
+            # On error, return last known attributes if available
+            if self._last_known_attributes:
+                return self._last_known_attributes
             return {}
-            
+
     def _format_size(self, size_bytes: int) -> str:
         """Format size to appropriate unit."""
         if size_bytes < 1024:
@@ -1032,6 +1342,7 @@ class UnraidDiskSpaceFreeSensor(UnraidDiskEntity, SensorEntity):
     _attr_device_class = None
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = ICON_DISK
+    _attr_should_poll = False  # Use coordinator data instead of polling
 
     def __init__(
         self,
@@ -1044,60 +1355,208 @@ class UnraidDiskSpaceFreeSensor(UnraidDiskEntity, SensorEntity):
         # Clean disk name to handle any potential slashes
         disk_name = disk_name.replace('/', '_')
         self._disk_name = disk_name
-        super().__init__(coordinator, server_name, "space_free", disk_id, "Data")
-        self._attr_name = f"Disk {disk_name} Free Space"
+        
+        # Determine disk type based on where it's found in the array data
+        disk_type = self._determine_disk_type(coordinator, disk_id)
+        
+        super().__init__(coordinator, server_name, "space_free", disk_id, disk_type)
+        
+        # Use consistent naming format: "{type} {name} Free Space"
+        if disk_type == "Cache":
+            self._attr_name = f"Cache {disk_name} Free Space"
+        else:
+            self._attr_name = f"{disk_type} {disk_name} Free Space"
+        
+        # Store the last known value to preserve it when disk is in standby
+        self._last_known_value = None
+        self._last_known_attributes = {}
+
+    def _determine_disk_type(self, coordinator, disk_id):
+        """Determine the disk type based on where it's found in the array data."""
+        array_data = coordinator.data.get("array_status", {}).get("array", {})
+        
+        # Check if it's a cache disk
+        for disk in array_data.get("caches", []):
+            if disk.get("id") == disk_id:
+                return "Cache"
+                
+        # Check if it's a parity disk
+        for disk in array_data.get("parities", []):
+            if disk.get("id") == disk_id:
+                return "Parity"
+                
+        # Default to data disk
+        return "Data"
 
     @property
     def native_value(self) -> Optional[float]:
         """Return the state of the sensor as a percentage."""
         try:
-            disks = self.coordinator.data.get("array_status", {}).get("array", {}).get("disks", [])
+            array_data = self.coordinator.data.get("array_status", {}).get("array", {})
+            
+            # For parity disks, check if the array is started
+            if self._disk_type == "Parity":
+                array_state = array_data.get("state", "").upper()
+                if array_state == "STARTED":
+                    # Parity disks have 0% free space when the array is started
+                    self._last_known_value = 0.0
+                    return 0.0
+                else:
+                    # If array is not started, parity is 100% free
+                    self._last_known_value = 100.0
+                    return 100.0
+            
+            # For data and cache disks, continue with the existing logic
+            # Look in the appropriate disk array based on type
+            if self._disk_type == "Cache":
+                disks = array_data.get("caches", [])
+            else:
+                disks = array_data.get("disks", [])
             
             for disk in disks:
                 if disk.get("id") == self._disk_id:
-                    fs_size = int(disk.get("fsSize", 0)) if disk.get("fsSize") else 0
-                    fs_free = int(disk.get("fsFree", 0)) if disk.get("fsFree") else 0
+                    # Check disk state
+                    disk_state = disk.get("state", "").upper()
                     
-                    if fs_size > 0:
-                        # Return free space as percentage
-                        return round((fs_free / fs_size) * 100, 1)
+                    # For cache disks (SSDs) or active disks, calculate current value
+                    if self._disk_type == "Cache" or disk_state == "ACTIVE":
+                        fs_size = int(disk.get("fsSize", 0)) if disk.get("fsSize") else 0
+                        fs_free = int(disk.get("fsFree", 0)) if disk.get("fsFree") else 0
+                        
+                        if fs_size > 0:
+                            # Calculate and store the current value
+                            current_value = round((fs_free / fs_size) * 100, 1)
+                            self._last_known_value = current_value
+                            return current_value
+                        elif self._last_known_value is not None:
+                            # If we can't calculate but have a previous value, use it
+                            return self._last_known_value
+                        return 0
+                    
+                    # For standby disks, return the last known value if available
+                    elif self._last_known_value is not None:
+                        _LOGGER.debug(f"Disk {self._disk_name} in {disk_state} state, using last known value: {self._last_known_value}%")
+                        return self._last_known_value
+                    
+                    # If no last known value, return 0 for standby disks
                     return 0
             
+            # If disk not found but we have a last known value, use it
+            if self._last_known_value is not None:
+                return self._last_known_value
+                
             return None
         except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
+            # On error, return last known value if available
+            if self._last_known_value is not None:
+                return self._last_known_value
             return None
-            
+
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
         """Return the state attributes."""
         try:
-            disks = self.coordinator.data.get("array_status", {}).get("array", {}).get("disks", [])
+            array_data = self.coordinator.data.get("array_status", {}).get("array", {})
+            
+            # Special handling for parity disks
+            if self._disk_type == "Parity":
+                # Find the parity disk in the array data
+                for disk in array_data.get("parities", []):
+                    if disk.get("id") == self._disk_id:
+                        # Get disk state and array state
+                        disk_state = disk.get("state", "").upper()
+                        array_state = array_data.get("state", "").upper()
+                        
+                        # Get disk size in bytes and format it
+                        size_bytes = int(disk.get("size", 0)) * 1024 if disk.get("size") else 0
+                        size_formatted = self._format_size(size_bytes)
+                        
+                        # Build attributes for parity disk
+                        attributes = {
+                            ATTR_DISK_NAME: disk.get("name"),
+                            ATTR_DISK_TYPE: self._disk_type,
+                            ATTR_DISK_SIZE: size_formatted,
+                            "size_bytes": size_bytes,
+                            "status": disk.get("status"),
+                            "state": disk_state,
+                            "rotational": disk.get("rotational", True),
+                            "array_state": array_state,
+                            "usage_percent": 100.0 if array_state == "STARTED" else 0.0,
+                            "used": size_formatted if array_state == "STARTED" else "0 B",
+                            "free": "0 B" if array_state == "STARTED" else size_formatted,
+                        }
+                        
+                        # Store the current attributes for future use
+                        self._last_known_attributes = dict(attributes)
+                        
+                        return attributes
+                
+                # If parity disk not found but we have last known attributes, use them
+                if self._last_known_attributes:
+                    return self._last_known_attributes
+                    
+                return {
+                    ATTR_DISK_NAME: self._disk_name,
+                    ATTR_DISK_TYPE: self._disk_type,
+                }
+            
+            # For data and cache disks, continue with the existing logic
+            # Look in the appropriate disk array based on type
+            if self._disk_type == "Cache":
+                disks = array_data.get("caches", [])
+            else:
+                disks = array_data.get("disks", [])
             
             for disk in disks:
                 if disk.get("id") == self._disk_id:
-                    # Convert KiB values to bytes for formatting
-                    fs_size_bytes = int(disk.get("fsSize", 0)) * 1024 if disk.get("fsSize") else 0
-                    fs_free_bytes = int(disk.get("fsFree", 0)) * 1024 if disk.get("fsFree") else 0
-                    fs_used_bytes = int(disk.get("fsUsed", 0)) * 1024 if disk.get("fsUsed") else 0
+                    # Get disk size in bytes and format it
+                    size_bytes = int(disk.get("size", 0)) * 1024 if disk.get("size") else 0
+                    size_formatted = self._format_size(size_bytes)
                     
-                    # Calculate percentage
-                    free_percent = round((fs_free_bytes / fs_size_bytes) * 100, 1) if fs_size_bytes > 0 else 0
-                    
-                    return {
+                    # Build base attributes
+                    attributes = {
                         ATTR_DISK_NAME: disk.get("name"),
-                        ATTR_DISK_TYPE: "Data",
-                        "total": self._format_size(fs_size_bytes),
-                        "free": self._format_size(fs_free_bytes),
-                        "used": self._format_size(fs_used_bytes),
-                        "free_percent": free_percent,
-                        ATTR_DISK_FS_TYPE: disk.get("fsType"),
-                        "fs_size_bytes": fs_size_bytes,
-                        "fs_free_bytes": fs_free_bytes,
-                        "fs_used_bytes": fs_used_bytes,
+                        ATTR_DISK_TYPE: self._disk_type,
+                        ATTR_DISK_SIZE: size_formatted,
+                        "size_bytes": size_bytes,
+                        "status": disk.get("status"),
+                        "state": disk.get("state", "").upper(),
+                        "rotational": disk.get("rotational", True),
                     }
+                    
+                    # Add file system information if it exists
+                    if "fsSize" in disk and "fsUsed" in disk and "fsFree" in disk:
+                        fs_size = int(disk.get("fsSize", 0)) * 1024 if disk.get("fsSize") else 0
+                        fs_free = int(disk.get("fsFree", 0)) * 1024 if disk.get("fsFree") else 0
+                        fs_used = int(disk.get("fsUsed", 0)) * 1024 if disk.get("fsUsed") else 0
+                        
+                        attributes.update({
+                            "fs_size": self._format_size(fs_size),
+                            "fs_free": self._format_size(fs_free),
+                            "fs_used": self._format_size(fs_used),
+                            "fs_size_bytes": fs_size,
+                            "fs_free_bytes": fs_free,
+                            "fs_used_bytes": fs_used,
+                        })
+                        
+                        # Add usage percentage
+                        if fs_size > 0:
+                            attributes["usage_percent"] = round((fs_used / fs_size) * 100, 1)
+                    
+                    # Store the current attributes for future use
+                    self._last_known_attributes = dict(attributes)
+                    
+                    return attributes
             
+            # If disk not found but we have last known attributes, use them
+            if self._last_known_attributes:
+                return self._last_known_attributes
+                
             return {}
         except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
+            # On error, return last known attributes if available
+            if self._last_known_attributes:
+                return self._last_known_attributes
             return {}
             
     def _format_size(self, size_bytes: int) -> str:

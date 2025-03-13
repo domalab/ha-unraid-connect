@@ -15,6 +15,11 @@ from .const import (
     ARRAY_STATE_STARTED,
     ATTR_CONTAINER_IMAGE,
     ATTR_CONTAINER_STATUS,
+    ATTR_DISK_NAME,
+    ATTR_DISK_SERIAL,
+    ATTR_DISK_SIZE,
+    ATTR_DISK_TEMP,
+    ATTR_DISK_TYPE,
     ATTR_VM_STATE,
     CONTAINER_STATE_RUNNING,
     DOMAIN as INTEGRATION_DOMAIN,
@@ -53,33 +58,40 @@ async def async_setup_entry(
 
     # Add disk binary sensors
     array_data = coordinator.data.get("array_status", {}).get("array", {})
+    _LOGGER.debug("Setting up disk binary sensors with array data: %s", array_data)
 
     # Add data disks
     data_disks = array_data.get("disks", [])
+    _LOGGER.debug("Found %s data disks", len(data_disks))
     for disk in data_disks:
         if disk.get("id") and disk.get("name"):
             disk_id = disk.get("id")
             disk_name = disk.get("name")
+            _LOGGER.debug("Creating health sensor for data disk %s (%s)", disk_name, disk_id)
             entities.append(
                 UnraidDiskHealthBinarySensor(coordinator, name, disk_id, disk_name, "Data")
             )
 
     # Add parity disks
     parity_disks = array_data.get("parities", [])
+    _LOGGER.debug("Found %s parity disks", len(parity_disks))
     for disk in parity_disks:
         if disk.get("id") and disk.get("name"):
             disk_id = disk.get("id")
             disk_name = disk.get("name")
+            _LOGGER.debug("Creating health sensor for parity disk %s (%s)", disk_name, disk_id)
             entities.append(
                 UnraidDiskHealthBinarySensor(coordinator, name, disk_id, disk_name, "Parity")
             )
 
     # Add cache disks
     cache_disks = array_data.get("caches", [])
+    _LOGGER.debug("Found %s cache disks", len(cache_disks))
     for disk in cache_disks:
         if disk.get("id") and disk.get("name"):
             disk_id = disk.get("id")
             disk_name = disk.get("name")
+            _LOGGER.debug("Creating health sensor for cache disk %s (%s)", disk_name, disk_id)
             entities.append(
                 UnraidDiskHealthBinarySensor(coordinator, name, disk_id, disk_name, "Cache")
             )
@@ -104,6 +116,7 @@ async def async_setup_entry(
                 UnraidVMRunningBinarySensor(coordinator, name, vm_id, vm_name)
             )
 
+    _LOGGER.debug("Adding %s binary sensor entities to Home Assistant", len(entities))
     async_add_entities(entities)
 
 
@@ -112,6 +125,7 @@ class UnraidOnlineBinarySensor(UnraidSystemEntity, BinarySensorEntity):
 
     _attr_name = "Online"
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(
         self,
@@ -133,9 +147,10 @@ class UnraidOnlineBinarySensor(UnraidSystemEntity, BinarySensorEntity):
 class UnraidArrayRunningBinarySensor(UnraidArrayEntity, BinarySensorEntity):
     """Binary sensor for Unraid array running status."""
 
-    _attr_name = "Array Running"
+    _attr_name = "Array"
     _attr_icon = ICON_ARRAY
     _attr_device_class = BinarySensorDeviceClass.RUNNING
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(
         self,
@@ -143,7 +158,7 @@ class UnraidArrayRunningBinarySensor(UnraidArrayEntity, BinarySensorEntity):
         server_name: str,
     ):
         """Initialize the binary sensor."""
-        super().__init__(coordinator, server_name, "running")
+        super().__init__(coordinator, server_name, "array")
 
     @property
     def is_on(self) -> bool:
@@ -173,9 +188,27 @@ class UnraidDiskHealthBinarySensor(UnraidDiskEntity, BinarySensorEntity):
         """Initialize the binary sensor."""
         # Clean disk name to handle any potential slashes
         disk_name = disk_name.replace('/', '_')
+        
+        # Use "health" as entity_key to make the entity ID follow the pattern binary_sensor.servername_disk_health
         super().__init__(coordinator, server_name, "health", disk_id, disk_type)
+        
         self._disk_name = disk_name
+        # Set the display name to just the disk name and Health
         self._attr_name = f"{disk_name} Health"
+        
+        # Override the unique_id to ensure it follows the desired pattern
+        self._attr_unique_id = f"{coordinator.api.host}_disk_{disk_id}_health"
+        
+        # Track if the disk is in standby mode
+        self._is_standby = False
+        self._last_known_problem = None
+        
+        _LOGGER.debug(
+            "Created disk health binary sensor: entity_id=%s, unique_id=%s, name=%s",
+            f"binary_sensor.{server_name.lower()}_{disk_name.lower()}_health",
+            self._attr_unique_id,
+            self._attr_name
+        )
 
     @property
     def is_on(self) -> bool:
@@ -193,14 +226,26 @@ class UnraidDiskHealthBinarySensor(UnraidDiskEntity, BinarySensorEntity):
                 
             for disk in disks:
                 if disk.get("id") == self._disk_id:
+                    # Check if disk is in standby mode
+                    disk_state = disk.get("state", "").upper()
+                    self._is_standby = disk_state == "STANDBY"
+                    
                     # Any disk, active or standby, should report a problem if status is not DISK_OK
                     # This doesn't wake the disk but reports problems based on the state Unraid already knows
-                    return disk.get("status") != "DISK_OK"
+                    has_problem = disk.get("status") != "DISK_OK"
+                    
+                    # Store the last known problem state
+                    if not self._is_standby or self._last_known_problem is None:
+                        self._last_known_problem = has_problem
+                    
+                    # If the disk is in standby, use the last known problem state
+                    # This prevents unnecessary disk wakeups just to check health
+                    return self._last_known_problem if self._is_standby else has_problem
             
             # Default to problem if disk not found
-            return True
+            return True if self._last_known_problem is None else self._last_known_problem
         except (KeyError, AttributeError, TypeError):
-            return True
+            return True if self._last_known_problem is None else self._last_known_problem
     
     @property
     def available(self) -> bool:
@@ -240,70 +285,135 @@ class UnraidDiskHealthBinarySensor(UnraidDiskEntity, BinarySensorEntity):
                 
             for disk in disks:
                 if disk.get("id") == self._disk_id:
-                    # Check disk state first
+                    # Include standby state in attributes
                     disk_state = disk.get("state", "").upper()
                     
-                    # Get disk size in bytes and format it
-                    size_bytes = int(disk.get("size", 0)) * 1024 if disk.get("size") else 0
-                    size_formatted = self._format_size(size_bytes)
-                    
-                    # Build base attributes
                     attributes = {
                         ATTR_DISK_NAME: disk.get("name"),
                         ATTR_DISK_TYPE: self._disk_type,
-                        ATTR_DISK_SIZE: size_formatted,
-                        "size_bytes": size_bytes,
                         "status": disk.get("status"),
-                        "rotational": disk.get("rotational", True),
+                        "state": disk_state,
                     }
                     
-                    # For inactive/standby disks, report basic info but don't query data
-                    # that would wake them up
-                    if disk_state != "ACTIVE" and disk_state != "":
-                        attributes["state"] = disk_state
-                        return attributes
+                    # Add serial number if available
+                    if disk.get("serial"):
+                        attributes[ATTR_DISK_SERIAL] = disk.get("serial")
                     
-                    # For active disks, add temp and other detailed data
-                    if "temp" in disk:
+                    # Add size if available and not in standby
+                    if disk.get("size") and disk_state != "STANDBY":
+                        attributes[ATTR_DISK_SIZE] = disk.get("size")
+                    
+                    # Add temperature if available and not in standby
+                    if disk.get("temp") is not None and disk_state != "STANDBY":
                         attributes[ATTR_DISK_TEMP] = disk.get("temp")
                     
-                    if "serial" in disk:
-                        attributes[ATTR_DISK_SERIAL] = disk.get("serial")
-                        
-                    # Add file system information if it exists
-                    if "fsSize" in disk and "fsUsed" in disk and "fsFree" in disk:
-                        fs_size = int(disk.get("fsSize", 0)) * 1024 if disk.get("fsSize") else 0
-                        fs_free = int(disk.get("fsFree", 0)) * 1024 if disk.get("fsFree") else 0
-                        fs_used = int(disk.get("fsUsed", 0)) * 1024 if disk.get("fsUsed") else 0
-                        
-                        attributes.update({
-                            "fs_size": self._format_size(fs_size),
-                            "fs_free": self._format_size(fs_free),
-                            "fs_used": self._format_size(fs_used),
-                            "fs_size_bytes": fs_size,
-                            "fs_free_bytes": fs_free,
-                            "fs_used_bytes": fs_used,
-                        })
-                        
-                        # Add usage percentage
-                        if fs_size > 0:
-                            attributes["usage_percent"] = round((fs_used / fs_size) * 100, 1)
-                                
                     return attributes
             
+            return {
+                ATTR_DISK_NAME: self._disk_name,
+                ATTR_DISK_TYPE: self._disk_type,
+            }
+        except (KeyError, AttributeError, TypeError):
+            return {
+                ATTR_DISK_NAME: self._disk_name,
+                ATTR_DISK_TYPE: self._disk_type,
+            }
+
+
+class UnraidDockerContainerRunningBinarySensor(UnraidDockerEntity, BinarySensorEntity):
+    """Binary sensor for Unraid Docker container running status."""
+
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+    _attr_icon = ICON_DOCKER
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+        container_id: str,
+        container_name: str,
+    ):
+        """Initialize the binary sensor."""
+        # Clean container name to handle any potential slashes
+        container_name = container_name.replace('/', '')
+        # Use "docker" as entity key instead of "running" to avoid "running" in the entity ID
+        super().__init__(coordinator, server_name, "docker", container_id)
+        self._container_name = container_name
+        # Remove "Running" from the display name
+        self._attr_name = f"{container_name}"
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if the container is running."""
+        try:
+            docker_data = self.coordinator.data.get("docker_containers", {}).get("dockerContainers", [])
+            for container in docker_data:
+                if container.get("id") == self._container_id:
+                    return container.get("state") == CONTAINER_STATE_RUNNING
+            return False
+        except (KeyError, AttributeError, TypeError):
+            return False
+
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
+        try:
+            docker_data = self.coordinator.data.get("docker_containers", {}).get("dockerContainers", [])
+            for container in docker_data:
+                if container.get("id") == self._container_id:
+                    return {
+                        ATTR_CONTAINER_IMAGE: container.get("image"),
+                        ATTR_CONTAINER_STATUS: container.get("status"),
+                    }
             return {}
-        except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
+        except (KeyError, AttributeError, TypeError):
             return {}
-            
-    def _format_size(self, size_bytes: int) -> str:
-        """Format size to appropriate unit."""
-        if size_bytes < 1024:
-            return f"{size_bytes} B"
-        elif size_bytes < 1024 ** 2:
-            return f"{size_bytes / 1024:.2f} KiB"
-        elif size_bytes < 1024 ** 3:
-            return f"{size_bytes / (1024 ** 2):.2f} MiB"
-        elif size_bytes < 1024 ** 4:
-            return f"{size_bytes / (1024 ** 3):.2f} GiB"
-        else:
-            return f"{size_bytes / (1024 ** 4):.2f} TiB"
+
+
+class UnraidVMRunningBinarySensor(UnraidVMEntity, BinarySensorEntity):
+    """Binary sensor for Unraid VM running status."""
+
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+    _attr_icon = ICON_VM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+        vm_id: str,
+        vm_name: str,
+    ):
+        """Initialize the binary sensor."""
+        # Use "vm" as entity key instead of "running" to avoid "running" in the entity ID
+        super().__init__(coordinator, server_name, "vm", vm_id)
+        self._vm_name = vm_name
+        # Remove "Running" from the display name
+        self._attr_name = f"{vm_name}"
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if the VM is running."""
+        try:
+            vm_data = self.coordinator.data.get("vms", {}).get("domain", [])
+            for vm in vm_data:
+                if vm.get("uuid") == self._vm_id:
+                    return vm.get("state") == VM_STATE_RUNNING
+            return False
+        except (KeyError, AttributeError, TypeError):
+            return False
+
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return the state attributes."""
+        try:
+            vm_data = self.coordinator.data.get("vms", {}).get("domain", [])
+            for vm in vm_data:
+                if vm.get("uuid") == self._vm_id:
+                    return {
+                        ATTR_VM_STATE: vm.get("state"),
+                    }
+            return {}
+        except (KeyError, AttributeError, TypeError):
+            return {}

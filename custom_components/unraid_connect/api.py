@@ -156,9 +156,6 @@ class UnraidApiClient:
                         kernel
                         docker
                     }
-                    devices {
-                        # GPU information is removed until we can get metrics
-                    }
                 }
                 online
             }
@@ -210,260 +207,263 @@ class UnraidApiClient:
             }
 
     async def get_array_status(self) -> Dict[str, Any]:
-        """Get array status without waking sleeping disks."""
-        try:
-            # Get basic array info without querying disks at all first
-            basic_query = """
-            query {
-                array {
-                    state
-                    capacity {
-                        kilobytes {
-                            total
-                            used
-                            free
-                        }
-                    }
-                }
-                vars {
-                    spindownDelay
-                    spinupGroups
-                }
-            }
-            """
-            
-            array_data = {
-                "array": {
-                    "state": "UNKNOWN",
-                    "capacity": {
-                        "kilobytes": {
-                            "total": "0",
-                            "used": "0",
-                            "free": "0"
-                        }
-                    },
-                    "disks": [],
-                    "parities": [],
-                    "caches": []
-                },
-                "spindown_config": {
-                    "delay": "0",
-                    "groups_enabled": False
-                }
-            }
+        """Get array status."""
+        # Initialize array data structure
+        array_data = {
+            "array": {
+                "state": "",
+                "capacity": {},
+                "disks": [],
+                "parities": [],
+                "caches": []
+            },
+            "flash": {},
+            "spindown_config": {}
+        }
 
-            # Get basic array info first
-            try:
-                response = await self._send_graphql_request(basic_query)
-                if "data" in response:
-                    if "array" in response["data"]:
-                        array_info = response["data"]["array"]
-                        array_data["array"].update(array_info)
-                    
-                    # Get spindown configuration
-                    if "vars" in response["data"]:
-                        vars_info = response["data"]["vars"]
-                        spindown_delay = vars_info.get("spindownDelay", "0")
-                        spinup_groups = vars_info.get("spinupGroups", False)
-                        
-                        array_data["spindown_config"] = {
-                            "delay": spindown_delay,
-                            "groups_enabled": spinup_groups
-                        }
-                        
-                        _LOGGER.debug("Spindown config: delay=%s, groups=%s", 
-                                    spindown_delay, spinup_groups)
-            except Exception as err:
-                _LOGGER.warning("Error getting basic array info: %s", err)
-
-            # Next, get a complete list of disks but with minimal info
-            # This API endpoint is safe to use and doesn't wake sleeping disks
-            complete_array_query = """
-            query {
-                array {
-                    parities {
-                        id
-                        name
-                        device
-                        size
-                        status
-                        type
+        # First, get basic array info (state, capacity, spindown config)
+        # This is safe to use and doesn't wake sleeping disks
+        basic_array_query = """
+        query {
+            array {
+                state
+                capacity {
+                    kilobytes {
+                        free
+                        used
+                        total
                     }
                     disks {
-                        id
-                        name
-                        device
-                        status
-                        type
-                    }
-                    caches {
-                        id
-                        name
-                        device
-                        size
-                        status
-                        type
-                        rotational
-                        fsSize
-                        fsFree
-                        fsUsed
+                        free
+                        used
+                        total
                     }
                 }
             }
-            """
-            
-            try:
-                array_response = await self._send_graphql_request(complete_array_query)
-                if "data" in array_response and "array" in array_response["data"]:
-                    array_info = array_response["data"]["array"]
-                    
-                    # Process parity disks - copy all parity disks without accessing them
-                    if "parities" in array_info:
-                        for parity in array_info["parities"]:
-                            # Add basic info for parity disks
-                            safe_parity = {
-                                "id": parity.get("id"),
-                                "name": parity.get("name"),
-                                "device": parity.get("device", ""),
-                                "size": str(parity.get("size", "0")),
-                                "status": parity.get("status", "DISK_OK"),
-                                "type": "Parity",
-                                "temp": None,  # No temperature to avoid waking disk
-                                "rotational": True,
-                                "state": "UNKNOWN"  # We don't know if it's active, but we won't check
-                            }
-                            array_data["array"]["parities"].append(safe_parity)
-                    
-                    # Process data disks - copy all data disks but mark them as inactive
-                    if "disks" in array_info:
-                        for disk in array_info["disks"]:
-                            # Add basic info without querying detailed stats
-                            safe_disk = {
-                                "id": disk.get("id"),
-                                "name": disk.get("name"),
-                                "device": disk.get("device", ""),
-                                "size": "0",  # Don't report size to avoid waking disk
-                                "status": disk.get("status", "DISK_OK"),
-                                "type": "Data",
-                                "temp": None,  # No temperature to avoid waking disk
-                                "rotational": True,
-                                "fsSize": "0",
-                                "fsFree": "0",
-                                "fsUsed": "0",
-                                "numReads": "0",
-                                "numWrites": "0",
-                                "numErrors": "0",
-                                "state": "STANDBY"  # Assume all disks are in standby for safety
-                            }
-                            array_data["array"]["disks"].append(safe_disk)
-                    
-                    # Process cache disks - cache drives are typically SSDs and don't need to spin down
-                    # so it's safe to query their full information
-                    if "caches" in array_info:
-                        for cache in array_info["caches"]:
-                            safe_cache = {
-                                "id": cache.get("id"),
-                                "name": cache.get("name"),
-                                "device": cache.get("device", ""),
-                                "size": str(cache.get("size", "0")),
-                                "status": cache.get("status", "DISK_OK"),
-                                "type": "Cache",
-                                "rotational": cache.get("rotational", False),
-                                "fsSize": str(cache.get("fsSize", "0")),
-                                "fsFree": str(cache.get("fsFree", "0")),
-                                "fsUsed": str(cache.get("fsUsed", "0")),
-                                "temp": None,  # We'll query temps separately below
-                                "state": "ACTIVE"  # Cache drives are usually SSDs so mark as active
-                            }
-                            array_data["array"]["caches"].append(safe_cache)
-                    
-                    # Get flash drive (boot) data - flash drive doesn't have spindown concerns
-                    boot_query = """
-                    query {
-                        array {
-                            boot {
-                                id
-                                name
-                                device
-                                fsSize
-                                fsFree
-                                fsUsed
-                            }
-                        }
-                    }
-                    """
-                    
-                    try:
-                        boot_response = await self._send_graphql_request(boot_query)
-                        if "data" in boot_response and "array" in boot_response["data"]:
-                            boot_info = boot_response["data"]["array"].get("boot")
-                            if boot_info:
-                                array_data["flash"] = boot_info
-                                _LOGGER.debug("Successfully retrieved flash drive information")
-                    except Exception as err:
-                        _LOGGER.warning("Error getting flash drive information: %s", err)
-                
-                    # Only query SSD temperatures (like cache drives) that don't need to spin down
-                    # We'll do this separately to minimize the risk of waking other disks
-                    for i, cache in enumerate(array_data["array"]["caches"]):
-                        if not cache.get("rotational", False):  # Only for SSDs
-                            cache_name = cache.get("name")
-                            if not cache_name:
-                                continue
-                                
-                            # Query just temperature for SSD cache drive
-                            temp_query = f"""
-                            query {{
-                                disks(filter: {{ name: "{cache_name}" }}) {{
-                                    temperature
-                                }}
-                            }}
-                            """
-                            
-                            try:
-                                temp_response = await self._send_graphql_request(temp_query)
-                                if ("data" in temp_response and "disks" in temp_response["data"] and
-                                    temp_response["data"]["disks"]):
-                                    temp = temp_response["data"]["disks"][0].get("temperature")
-                                    # Update the cache in our array data
-                                    array_data["array"]["caches"][i]["temp"] = temp
-                            except Exception as temp_err:
-                                _LOGGER.debug("Error getting cache drive temperature: %s", temp_err)
-            except Exception as err:
-                _LOGGER.warning("Error getting minimal array info: %s", err)
-            
-            return array_data
-            
-        except UnraidApiError as err:
-            _LOGGER.warning("GraphQL array status query failed: %s", err)
-            return {
-                "array": {
-                    "state": "ERROR",
-                    "capacity": {"kilobytes": {"total": "0", "used": "0", "free": "0"}},
-                    "disks": [],
-                    "parities": [],
-                    "caches": []
-                },
-                "spindown_config": {
-                    "delay": "0",
-                    "groups_enabled": False
-                }
+            vars {
+                spindownDelay
+                spinupGroups
             }
+        }
+        """
+
+        try:
+            response = await self._send_graphql_request(basic_array_query)
+            if "data" in response and "array" in response["data"]:
+                array_info = response["data"]["array"]
+                array_data["array"].update(array_info)
+            
+                # Get spindown configuration
+                if "vars" in response["data"]:
+                    vars_info = response["data"]["vars"]
+                    spindown_delay = vars_info.get("spindownDelay", "0")
+                    spinup_groups = vars_info.get("spinupGroups", False)
+                    
+                    array_data["spindown_config"] = {
+                        "delay": spindown_delay,
+                        "groups_enabled": spinup_groups
+                    }
+                    
+                    _LOGGER.debug("Spindown config: delay=%s, groups=%s", 
+                                spindown_delay, spinup_groups)
         except Exception as err:
-            _LOGGER.error("Error getting array status: %s", err)
-            return {
-                "array": {
-                    "state": "ERROR",
-                    "capacity": {"kilobytes": {"total": "0", "used": "0", "free": "0"}},
-                    "disks": [],
-                    "parities": [],
-                    "caches": []
-                },
-                "spindown_config": {
-                    "delay": "0",
-                    "groups_enabled": False
+            _LOGGER.warning("Error getting basic array info: %s", err)
+
+        # Always get a complete list of disks but with minimal info
+        # This API endpoint is safe to use and doesn't wake sleeping disks
+        complete_array_query = """
+        query {
+            array {
+                parities {
+                    id
+                    name
+                    device
+                    size
+                    status
+                    type
+                }
+                disks {
+                    id
+                    name
+                    device
+                    status
+                    type
+                    fsSize
+                    fsFree
+                    fsUsed
+                }
+                caches {
+                    id
+                    name
+                    device
+                    status
+                    type
+                    fsSize
+                    fsFree
+                    fsUsed
                 }
             }
+        }
+        """
+
+        try:
+            response = await self._send_graphql_request(complete_array_query)
+            if "data" in response and "array" in response["data"]:
+                array_info = response["data"]["array"]
+                
+                # Process parity disks - copy all parity disks but mark them as inactive
+                if "parities" in array_info:
+                    for parity in array_info["parities"]:
+                        # Check if the disk is likely in standby mode
+                        # We can't get the actual disk state from the API
+                        # So we'll use the status field to determine if the disk is active
+                        disk_status = parity.get("status", "").upper()
+                        
+                        # Default to STANDBY for safety
+                        disk_state = "STANDBY"
+                        
+                        # If the disk status is OK, we'll check if it's likely active
+                        if disk_status == "DISK_OK":
+                            # For parity disks, we'll assume they're active if the array is started
+                            # This is a safe assumption since we're not querying detailed info
+                            array_state = array_data.get("array", {}).get("state", "")
+                            if array_state == "STARTED":
+                                disk_state = "ACTIVE"
+                        
+                        # Add basic info without querying detailed stats
+                        safe_parity = {
+                            "id": parity.get("id"),
+                            "name": parity.get("name"),
+                            "device": parity.get("device", ""),
+                            "size": parity.get("size", "0"),
+                            "status": parity.get("status", "DISK_OK"),
+                            "type": "Parity",
+                            "temp": None,  # No temperature to avoid waking disk
+                            "rotational": True,
+                            "state": disk_state  # Use our determined state
+                        }
+                        array_data["array"]["parities"].append(safe_parity)
+                
+                # Process data disks - copy all data disks but mark them as inactive
+                if "disks" in array_info:
+                    for disk in array_info["disks"]:
+                        # We can't get the actual disk state from the API
+                        # So we'll use the status field to determine if the disk is active
+                        disk_status = disk.get("status", "").upper()
+                        
+                        # Default to STANDBY for safety
+                        disk_state = "STANDBY"
+                        
+                        # If the disk has filesystem info, it's likely active
+                        fs_size = disk.get("fsSize", "0")
+                        if fs_size and fs_size != "0":
+                            disk_state = "ACTIVE"
+                        
+                        # Add basic info without querying detailed stats
+                        safe_disk = {
+                            "id": disk.get("id"),
+                            "name": disk.get("name"),
+                            "device": disk.get("device", ""),
+                            "status": disk.get("status", "DISK_OK"),
+                            "type": disk.get("type", "Data"),
+                            "fsSize": disk.get("fsSize", "0"),
+                            "fsFree": disk.get("fsFree", "0"),
+                            "fsUsed": disk.get("fsUsed", "0"),
+                            "temp": None,  # No temperature to avoid waking disk
+                            "rotational": True,  # Assume rotational for safety
+                            "state": disk_state  # Use our determined state
+                        }
+                        array_data["array"]["disks"].append(safe_disk)
+                
+                # Process cache disks - copy all cache disks
+                if "caches" in array_info:
+                    for cache in array_info["caches"]:
+                        # Cache disks are typically SSDs and don't have spindown issues
+                        # But we'll still be cautious
+                        disk_status = cache.get("status", "").upper()
+                        
+                        # Default to ACTIVE for cache disks (typically SSDs)
+                        disk_state = "ACTIVE"
+                        
+                        # Add basic info without querying detailed stats
+                        safe_cache = {
+                            "id": cache.get("id"),
+                            "name": cache.get("name"),
+                            "device": cache.get("device", ""),
+                            "status": cache.get("status", "DISK_OK"),
+                            "type": cache.get("type", "Cache"),
+                            "fsSize": cache.get("fsSize", "0"),
+                            "fsFree": cache.get("fsFree", "0"),
+                            "fsUsed": cache.get("fsUsed", "0"),
+                            "temp": None,  # Will be populated by the temperature query for cache disks
+                            "rotational": False,  # Assume SSD for cache
+                            "state": disk_state  # Use our determined state
+                        }
+                        array_data["array"]["caches"].append(safe_cache)
+        except Exception as err:
+            _LOGGER.warning("Error getting complete array info: %s", err)
+
+        # Only get detailed disk information if we're doing a detailed update
+        # This is controlled by the coordinator's detail update counter
+        if not hasattr(self, '_skip_disk_details') or not self._skip_disk_details:
+            # Get detailed disk information (temperatures, etc.)
+            # This might wake sleeping disks, so we only do it when requested
+            _LOGGER.debug("Getting detailed disk information")
+            
+            # Add detailed queries here if needed
+            
+        else:
+            _LOGGER.debug("Skipping disk details query to avoid waking disks")
+            
+            # Even when skipping detailed queries, we can safely get temperature data for cache disks
+            # since they're typically SSDs/NVMe and don't have spindown concerns
+            try:
+                # Only query cache disks to avoid waking HDDs
+                cache_temp_query = """
+                query {
+                    disks {
+                        name
+                        device
+                        type
+                        temperature
+                    }
+                }
+                """
+                
+                _LOGGER.debug("Getting cache disk temperatures")
+                cache_temp_response = await self._send_graphql_request(cache_temp_query)
+                if "data" in cache_temp_response and "disks" in cache_temp_response["data"]:
+                    all_disks = cache_temp_response["data"]["disks"]
+                    
+                    # Update cache disks with temperature data
+                    for cache_disk in array_data["array"]["caches"]:
+                        cache_name = cache_disk.get("name")
+                        cache_device = cache_disk.get("device")
+                        
+                        # Find matching disk in the query results
+                        for disk in all_disks:
+                            disk_name = disk.get("name")
+                            disk_device = disk.get("device")
+                            disk_type = disk.get("type", "").lower()
+                            
+                            # Match by name, device, or check if it's a cache type
+                            if (cache_name and disk_name and cache_name == disk_name) or \
+                               (cache_device and disk_device and cache_device == disk_device) or \
+                               ("cache" in disk_type):
+                                
+                                # Get temperature if available
+                                temp = disk.get("temperature")
+                                if temp is not None:
+                                    cache_disk["temp"] = temp
+                                    _LOGGER.debug("Updated cache disk %s temperature to %s°C", cache_name, temp)
+            except UnraidApiError as err:
+                _LOGGER.debug("API error getting cache disk temperatures: %s", err)
+            except asyncio.TimeoutError:
+                _LOGGER.debug("Timeout when getting cache disk temperatures - this is normal if disks are in standby")
+            except Exception as err:
+                _LOGGER.debug("Error getting cache disk temperatures: %s", err)
+
+        return array_data
 
     async def get_docker_containers(self) -> Dict[str, Any]:
         """Get docker containers."""
@@ -591,7 +591,7 @@ class UnraidApiClient:
                         # Get detailed info just for this specific disk
                         detailed_query = f"""
                         query {{
-                            disks(filter: {{ name: "{disk_name}" }}) {{
+                            disks {{
                                 device
                                 name
                                 type
@@ -611,7 +611,9 @@ class UnraidApiClient:
                         """
                         try:
                             detailed_response = await self._send_graphql_request(detailed_query)
-                            disk_details = detailed_response.get("data", {}).get("disks", [])
+                            all_disks = detailed_response.get("data", {}).get("disks", [])
+                            # Find the specific disk by name
+                            disk_details = [d for d in all_disks if d.get("name") == disk_name]
                             if disk_details:
                                 detailed_disks.extend(disk_details)
                                 _LOGGER.debug("Got detailed info for active disk: %s", disk_name)

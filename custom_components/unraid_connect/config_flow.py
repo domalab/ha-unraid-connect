@@ -111,7 +111,9 @@ class OptionsFlow(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
-        self.config_entry = config_entry
+        # Store the entry data instead of the entry itself
+        self._config_entry_data = dict(config_entry.data)
+        self._options = dict(config_entry.options)
 
     async def async_step_init(
         self, user_input: Optional[Dict[str, Any]] = None
@@ -123,13 +125,13 @@ class OptionsFlow(config_entries.OptionsFlow):
         options = {
             vol.Optional(
                 CONF_SCAN_INTERVAL,
-                default=self.config_entry.options.get(
+                default=self._options.get(
                     CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
                 ),
             ): int,
             vol.Optional(
                 CONF_VERIFY_SSL,
-                default=self.config_entry.options.get(CONF_VERIFY_SSL, True),
+                default=self._options.get(CONF_VERIFY_SSL, True),
             ): bool,
         }
 
