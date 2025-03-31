@@ -87,6 +87,8 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator):
                     if should_query_disk_details:
                         _LOGGER.debug("Performing detailed disk query (cycle %s of %s)", 
                                      self._detail_update_counter, self._detail_update_frequency)
+                        # Reset counter for next time
+                        self._detail_update_counter = 0
                     else:
                         _LOGGER.debug("Skipping detailed disk query to avoid waking disks (cycle %s of %s)",
                                      self._detail_update_counter, self._detail_update_frequency)
@@ -139,117 +141,51 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator):
                         except (ValueError, TypeError):
                             _LOGGER.warning("Invalid spindown delay value: %s", spindown_delay_str)
                     
-                    # If this is the first time, store the complete result
-                    if not self.data.get("array_status"):
-                        self.data["array_status"] = array_status
-                    else:
-                        # Update only the non-disk parts of the array status
-                        if "array" in array_status:
-                            # Update array state and capacity info
-                            if "state" in array_status["array"]:
-                                self.data["array_status"]["array"]["state"] = array_status["array"]["state"]
-                            
-                            if "capacity" in array_status["array"]:
-                                self.data["array_status"]["array"]["capacity"] = array_status["array"]["capacity"]
-                            
-                            # For cache drives (SSDs), we can safely update them without wakeup concerns
-                            if "caches" in array_status["array"]:
-                                self.data["array_status"]["array"]["caches"] = array_status["array"]["caches"]
-                            
-                            # For disks and parity, merge the new data with existing data to preserve values
-                            if "disks" in array_status["array"]:
-                                # If we don't have any disk info yet, use the new data
-                                if not self.data["array_status"]["array"].get("disks"):
-                                    self.data["array_status"]["array"]["disks"] = array_status["array"]["disks"]
-                                else:
-                                    # Otherwise, merge the data to preserve values for standby disks
-                                    existing_disks = self.data["array_status"]["array"]["disks"]
-                                    new_disks = array_status["array"]["disks"]
-                                    
-                                    # Create a map of existing disks by ID for quick lookup
-                                    existing_disk_map = {disk.get("id"): disk for disk in existing_disks if disk.get("id")}
-                                    
-                                    # Create a new list to store the merged disks
-                                    merged_disks = []
-                                    
-                                    # Process each new disk
-                                    for new_disk in new_disks:
-                                        disk_id = new_disk.get("id")
-                                        if not disk_id:
-                                            # If no ID, just use the new disk data
-                                            merged_disks.append(new_disk)
-                                            continue
-                                            
-                                        # Check if we have existing data for this disk
-                                        if disk_id in existing_disk_map:
-                                            existing_disk = existing_disk_map[disk_id]
-                                            
-                                            # Get the disk states
-                                            new_state = new_disk.get("state", "").upper()
-                                            existing_state = existing_disk.get("state", "").upper()
-                                            
-                                            # If the disk was active but is now in standby, preserve the filesystem data
-                                            if existing_state == "ACTIVE" and new_state == "STANDBY":
-                                                # Create a merged disk with preserved filesystem data
-                                                merged_disk = dict(new_disk)  # Start with new disk data
-                                                
-                                                # Preserve filesystem data from the existing disk
-                                                if "fsSize" in existing_disk and existing_disk["fsSize"] != "0":
-                                                    merged_disk["fsSize"] = existing_disk["fsSize"]
-                                                if "fsFree" in existing_disk and existing_disk["fsFree"] != "0":
-                                                    merged_disk["fsFree"] = existing_disk["fsFree"]
-                                                if "fsUsed" in existing_disk and existing_disk["fsUsed"] != "0":
-                                                    merged_disk["fsUsed"] = existing_disk["fsUsed"]
-                                                
-                                                # Add the merged disk to the list
-                                                merged_disks.append(merged_disk)
-                                                _LOGGER.debug(f"Preserved filesystem data for disk {disk_id} in standby mode")
-                                            else:
-                                                # For other state transitions, use the new disk data
-                                                merged_disks.append(new_disk)
-                                        else:
-                                            # If no existing data, use the new disk data
-                                            merged_disks.append(new_disk)
-                                    
-                                    # Update the disks with the merged list
-                                    self.data["array_status"]["array"]["disks"] = merged_disks
-                            
-                            # For parity disks, similar approach but simpler since they don't have filesystem data
-                            if "parities" in array_status["array"]:
-                                if not self.data["array_status"]["array"].get("parities"):
-                                    self.data["array_status"]["array"]["parities"] = array_status["array"]["parities"]
-                        
-                        # Update spindown configuration
-                        if "spindown_config" in array_status:
-                            self.data["array_status"]["spindown_config"] = array_status["spindown_config"]
-                            
-                        # Update flash drive data
-                        if "flash" in array_status:
-                            self.data["array_status"]["flash"] = array_status["flash"]
-                except Exception as err:
-                    _LOGGER.error("Error fetching array status: %s", err)
-                
-                # For shares, only query if it's time for a detailed update and respect spindown settings
-                if self._detail_update_counter >= self._detail_update_frequency:
-                    _LOGGER.debug("Performing detailed update (cycle %s of %s)", 
-                                 self._detail_update_counter, self._detail_update_frequency)
+                    # Update array status data
+                    self.data["array_status"] = array_status
                     
-                    # Shares information - but only once every N cycles based on spindown delay
+                    # Get shares data
                     try:
                         shares = await self.api.get_shares()
                         self.data["shares"] = shares
                     except Exception as err:
                         _LOGGER.error("Error fetching shares: %s", err)
-                        
-                    # Reset counter
-                    self._detail_update_counter = 0
+                    
+                    # Get detailed disk information if applicable
+                    if should_query_disk_details:
+                        try:
+                            disks_info = await self.api.get_disks_info()
+                            self.data["disks_info"] = disks_info
+                        except Exception as err:
+                            _LOGGER.error("Error fetching disk info: %s", err)
+                    
+                    # Get network information
+                    try:
+                        network_info = await self.api.get_network_info()
+                        self.data["network_info"] = network_info
+                    except Exception as err:
+                        _LOGGER.error("Error fetching network info: %s", err)
+                    
+                    # Get parity history
+                    try:
+                        parity_history = await self.api.get_parity_history()
+                        self.data["parity_history"] = parity_history
+                    except Exception as err:
+                        _LOGGER.error("Error fetching parity history: %s", err)
+                    
+                except Exception as err:
+                    _LOGGER.error("Error fetching array status: %s", err)
 
-                # Return data even if some requests failed
                 return self.data
-
+                
+        except asyncio.TimeoutError as err:
+            _LOGGER.error("Timeout error updating from Unraid API: %s", err)
+            raise UpdateFailed(f"Timeout error communicating with API: {err}")
         except UnraidApiError as err:
-            if any(s in str(err) for s in ("401", "403", "Unauthorized", "Forbidden")):
-                raise ConfigEntryAuthFailed from err
-            raise UpdateFailed(f"Error communicating with Unraid API: {err}")
+            _LOGGER.error("Error talking to Unraid API: %s", err)
+            if "Auth" in str(err) or "401" in str(err) or "403" in str(err):
+                raise ConfigEntryAuthFailed(f"Auth failed: {err}")
+            raise UpdateFailed(f"Error communicating with API: {err}")
         except Exception as err:
-            raise UpdateFailed(f"Unexpected error: {err}")
+            _LOGGER.exception("Unknown error occurred: %s", err)
+            raise UpdateFailed(f"Unknown error occurred: {err}")

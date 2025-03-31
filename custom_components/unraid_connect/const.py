@@ -17,7 +17,6 @@ CONF_VERIFY_SSL = "verify_ssl"
 
 # API
 API_TIMEOUT = 10
-BASE_GRAPHQL_URL = "/graphql"
 
 # Array state values
 ARRAY_STATE_STARTED = "STARTED"

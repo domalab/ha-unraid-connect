@@ -55,6 +55,10 @@ This experimental custom integration allows you to monitor and control your Unra
 - Unraid server with Unraid Connect plugin installed and configured
 - Valid API key from Unraid Connect plugin
 
+## Technical Implementation
+
+This integration uses the [`unraid-api`](https://pypi.org/project/unraid-api/) Python package, which provides a clean, intuitive interface to Unraid's GraphQL API. The package offers complete coverage of Unraid API endpoints with both synchronous and asynchronous client interfaces, strongly-typed models, and comprehensive error handling.
+
 ## Installation
 
 ### Option 1: HACS (Recommended)
