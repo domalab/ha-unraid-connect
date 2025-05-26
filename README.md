@@ -1,0 +1,245 @@
+# Unraid Connect Integration for Home Assistant
+
+[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1.0%2B-blue.svg)](https://www.home-assistant.io/)
+[![Version](https://img.shields.io/badge/Version-0.1.0--beta.1-orange.svg)](https://github.com/domalab/ha-unraid-connect/releases)
+
+> **⚠️ BETA SOFTWARE WARNING**
+> This integration is currently in **beta phase**. The Unraid GraphQL API is still under active development by the Unraid team, and many features may not work as expected or may be unavailable. Use at your own risk and expect breaking changes.
+
+A comprehensive Home Assistant integration for monitoring and controlling Unraid servers via the Unraid Connect plugin's GraphQL API.
+
+## Features
+
+- **System Monitoring**: CPU usage, memory usage, temperatures, uptime, and system information
+- **Array Management**: Array status, disk health, space usage, and parity operations
+- **Docker Container Control**: Monitor and control Docker containers
+- **Virtual Machine Management**: Start, stop, pause, and monitor VMs
+- **Real-time Updates**: Configurable polling intervals with intelligent caching
+- **Comprehensive Services**: Control array, VMs, Docker containers, and system operations
+- **CORS Support**: Proper handling of cross-origin requests
+
+## Prerequisites
+
+### Unraid Connect Plugin
+
+This integration requires the **Unraid Connect** plugin to be installed on your Unraid server:
+
+1. Install the Unraid Connect plugin from the Community Applications
+2. Configure the plugin and obtain an API key
+3. **Important**: Add your Home Assistant URL to the "API extra origins" setting:
+   ```
+   http://YOUR_HA_IP:8123
+   ```
+4. Click **APPLY** after adding the origin (this step is crucial!)
+
+## Installation
+
+### HACS (Recommended)
+
+1. Open HACS in Home Assistant
+2. Go to "Integrations"
+3. Click the three dots in the top right corner
+4. Select "Custom repositories"
+5. Add this repository URL: `https://github.com/domalab/ha-unraid-connect`
+6. Select "Integration" as the category
+7. Click "Add"
+8. Find "Unraid Connect" in the integration list and install it
+9. Restart Home Assistant
+
+### Manual Installation
+
+1. Download the latest release from the [releases page](https://github.com/domalab/ha-unraid-connect/releases)
+2. Extract the `custom_components/unraid_connect` folder to your Home Assistant `custom_components` directory
+3. Restart Home Assistant
+
+## Configuration
+
+### Adding the Integration
+
+1. Go to **Settings** → **Devices & Services**
+2. Click **Add Integration**
+3. Search for "Unraid Connect"
+4. Enter your Unraid server details:
+   - **Host URL**: Your Unraid server URL (e.g., `http://192.168.1.100` or `https://unraid.local`)
+   - **API Key**: The API key from the Unraid Connect plugin
+   - **Name**: A friendly name for your server (optional)
+   - **Verify SSL**: Whether to verify SSL certificates (default: true)
+   - **Scan Interval**: How often to update data in seconds (default: 30)
+
+### Configuration Options
+
+You can modify these settings after setup by clicking **Configure** on the integration:
+
+- **Scan Interval**: Adjust polling frequency (15-300 seconds recommended)
+- **Verify SSL**: Toggle SSL certificate verification
+
+## Entities
+
+The integration creates various entities organized by category:
+
+### System Entities
+
+- **System State**: Overall system status and information
+- **Online Status**: Binary sensor for server connectivity
+- **CPU Usage**: Percentage with detailed attributes (cores, threads, brand)
+- **Memory Usage**: RAM usage percentage with total/available memory
+- **CPU Temperature**: Processor temperature monitoring
+- **Motherboard Temperature**: System board temperature
+- **Uptime**: Server uptime in days
+- **Notifications**: Count of active Unraid notifications
+
+### Array Entities
+
+- **Array State**: Current array status (Started/Stopped)
+- **Array Running**: Binary sensor for array operational status
+- **Array Space Used**: Used storage space with total/free as attributes
+- **Array Space Free**: Available storage space
+- **Flash Usage**: USB flash drive usage
+
+### Disk Entities
+
+For each disk in your array:
+- **Disk Health**: Binary sensor indicating disk status
+- **Disk Space Used**: Individual disk usage with size and type attributes
+- **Temperature**: Disk temperature (when available)
+
+### Docker Container Entities
+
+For each Docker container:
+- **Container Switch**: Start/stop container control
+- **Container Status**: Binary sensor for running state
+
+### Virtual Machine Entities
+
+For each VM:
+- **VM Switch**: Start/stop VM control
+- **VM Status**: Binary sensor for running state
+
+### Control Buttons
+
+- **Reboot**: Restart the Unraid server
+- **Shutdown**: Shut down the server
+- **Start Array**: Start the disk array
+- **Stop Array**: Stop the disk array
+- **Start Parity Check**: Begin parity verification
+- **Pause/Resume/Cancel Parity Check**: Parity operation controls
+
+## Services
+
+The integration provides comprehensive services for automation:
+
+### Array Services
+- `unraid.start_array`: Start the disk array
+- `unraid.stop_array`: Stop the disk array
+- `unraid.start_parity_check`: Start parity check (with optional correction)
+- `unraid.pause_parity_check`: Pause running parity check
+- `unraid.resume_parity_check`: Resume paused parity check
+- `unraid.cancel_parity_check`: Cancel parity check
+
+### System Services
+- `unraid.reboot`: Reboot the server
+- `unraid.shutdown`: Shutdown the server
+
+### Virtual Machine Services
+- `unraid.start_vm`: Start a VM
+- `unraid.stop_vm`: Stop a VM (with optional force)
+- `unraid.pause_vm`: Pause a VM
+- `unraid.resume_vm`: Resume a paused VM
+- `unraid.reboot_vm`: Reboot a VM
+- `unraid.manage_vm`: Unified VM management service
+
+### Docker Services
+- `unraid.docker_restart`: Restart a container
+- `unraid.docker_logs`: Get container logs
+
+## Beta Status & Known Limitations
+
+### Current Beta Limitations
+
+This integration is in beta because the underlying Unraid GraphQL API is still under development. Known issues include:
+
+- **API Instability**: Some GraphQL queries may fail or return incomplete data
+- **Feature Availability**: Not all Unraid features are exposed via the GraphQL API yet
+- **Breaking Changes**: API schema changes may require integration updates
+- **Performance**: Some operations may be slower than expected
+- **Documentation**: Unraid's GraphQL API documentation is still evolving
+
+### Semantic Versioning
+
+This project follows [Semantic Versioning](https://semver.org/):
+
+- **0.x.x-beta.x**: Beta releases (current phase)
+- **0.x.x**: Pre-release versions with potential breaking changes
+- **1.x.x**: First stable release when Unraid's GraphQL API stabilizes
+
+### Reporting Issues
+
+When reporting issues, please include:
+
+1. Your Unraid version
+2. Unraid Connect plugin version
+3. Integration version
+4. Home Assistant version
+5. Debug logs (see Debug Logging section below)
+6. Specific error messages or unexpected behavior
+
+## Troubleshooting
+
+### Common Issues
+
+**Authentication Failed**
+- Verify your API key is correct
+- Ensure you've added your HA URL to Unraid Connect's "API extra origins"
+- Make sure you clicked "APPLY" after adding the origin
+- Try using the HTTPS URL if your server redirects
+
+**Cannot Connect**
+- Check if the Unraid Connect plugin is running
+- Verify the server URL is accessible from Home Assistant
+- Ensure firewall settings allow the connection
+- Try disabling SSL verification if using self-signed certificates
+
+**Missing Entities**
+- Some entities only appear when the corresponding services are available
+- VMs require the VM service to be enabled in Unraid
+- Docker entities require containers to be present
+
+**Slow Updates**
+- Adjust the scan interval in integration options
+- The integration uses intelligent caching to minimize API calls
+- Some data is cached longer than others to balance performance and freshness
+
+### Debug Logging
+
+Enable debug logging by adding to your `configuration.yaml`:
+
+```yaml
+logger:
+  logs:
+    custom_components.unraid_connect: debug
+```
+
+## Contributing
+
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+## Support
+
+- [GitHub Issues](https://github.com/domalab/ha-unraid-connect/issues)
+- [Home Assistant Community Forum](https://community.home-assistant.io/)
+
+---
+
+**Note**: This integration is not affiliated with Lime Technology or the official Unraid project.

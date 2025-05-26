@@ -1,0 +1,52 @@
+{
+  "services": {
+    "start_array": {
+      "service": "mdi:server-plus"
+    },
+    "stop_array": {
+      "service": "mdi:server-minus"
+    },
+    "start_parity_check": {
+      "service": "mdi:check-circle"
+    },
+    "pause_parity_check": {
+      "service": "mdi:pause-circle"
+    },
+    "resume_parity_check": {
+      "service": "mdi:play-circle"
+    },
+    "cancel_parity_check": {
+      "service": "mdi:cancel"
+    },
+    "reboot": {
+      "service": "mdi:restart"
+    },
+    "shutdown": {
+      "service": "mdi:power"
+    },
+    "vm_pause": {
+      "service": "mdi:pause"
+    },
+    "vm_resume": {
+      "service": "mdi:play"
+    },
+    "vm_force_shutdown": {
+      "service": "mdi:power-off"
+    },
+    "vm_reboot": {
+      "service": "mdi:restart"
+    },
+    "vm_reset": {
+      "service": "mdi:restart-alert"
+    },
+    "vm_force_stop": {
+      "service": "mdi:stop-circle"
+    },
+    "docker_restart": {
+      "service": "mdi:restart"
+    },
+    "docker_logs": {
+      "service": "mdi:text-box-outline"
+    }
+  }
+}

@@ -1,0 +1,252 @@
+# Service definitions for Unraid integration
+
+# Array services
+start_array:
+  target:
+    entity:
+      integration: unraid_connect
+
+stop_array:
+  target:
+    entity:
+      integration: unraid_connect
+
+start_parity_check:
+  target:
+    entity:
+      integration: unraid_connect
+  fields:
+    correct:
+      required: false
+      example: true
+      default: false
+      selector:
+        boolean:
+
+pause_parity_check:
+  target:
+    entity:
+      integration: unraid_connect
+
+resume_parity_check:
+  target:
+    entity:
+      integration: unraid_connect
+
+cancel_parity_check:
+  target:
+    entity:
+      integration: unraid_connect
+
+reboot:
+  target:
+    entity:
+      integration: unraid_connect
+
+shutdown:
+  target:
+    entity:
+      integration: unraid_connect
+
+# Enhanced VM Management Services
+
+manage_vm:
+  name: Manage VM
+  description: Unified VM management with comprehensive error handling
+  fields:
+    vm_id:
+      name: VM ID
+      description: The ID of the VM to manage
+      required: true
+      selector:
+        text:
+    action:
+      name: Action
+      description: The action to perform on the VM
+      required: true
+      selector:
+        select:
+          options:
+            - "start"
+            - "stop"
+            - "pause"
+            - "resume"
+            - "reboot"
+            - "force_stop"
+    force:
+      name: Force (for stop action)
+      description: Force stop the VM (only applies to stop action)
+      required: false
+      default: false
+      selector:
+        boolean:
+
+# Backward compatibility VM services
+start_vm:
+  name: Start VM
+  description: Start a virtual machine
+  fields:
+    vm_id:
+      name: VM ID
+      description: The ID of the VM to start
+      required: true
+      selector:
+        text:
+
+stop_vm:
+  name: Stop VM
+  description: Stop a virtual machine
+  fields:
+    vm_id:
+      name: VM ID
+      description: The ID of the VM to stop
+      required: true
+      selector:
+        text:
+    force:
+      name: Force Stop
+      description: Force stop the VM
+      required: false
+      default: false
+      selector:
+        boolean:
+
+pause_vm:
+  name: Pause VM
+  description: Pause a virtual machine
+  fields:
+    vm_id:
+      name: VM ID
+      description: The ID of the VM to pause
+      required: true
+      selector:
+        text:
+
+resume_vm:
+  name: Resume VM
+  description: Resume a paused virtual machine
+  fields:
+    vm_id:
+      name: VM ID
+      description: The ID of the VM to resume
+      required: true
+      selector:
+        text:
+
+reboot_vm:
+  name: Reboot VM
+  description: Reboot a virtual machine
+  fields:
+    vm_id:
+      name: VM ID
+      description: The ID of the VM to reboot
+      required: true
+      selector:
+        text:
+
+# Legacy VM services
+vm_pause:
+  target:
+    entity:
+      domain: switch
+      integration: unraid_connect
+  fields:
+    vm_id:
+      required: false
+      example: "vm-uuid-123"
+      selector:
+        text:
+
+vm_resume:
+  target:
+    entity:
+      domain: switch
+      integration: unraid_connect
+  fields:
+    vm_id:
+      required: false
+      example: "vm-uuid-123"
+      selector:
+        text:
+
+vm_force_shutdown:
+  target:
+    entity:
+      domain: switch
+      integration: unraid_connect
+  fields:
+    vm_id:
+      required: false
+      example: "vm-uuid-123"
+      selector:
+        text:
+
+vm_reboot:
+  target:
+    entity:
+      domain: switch
+      integration: unraid_connect
+  fields:
+    vm_id:
+      required: false
+      example: "vm-uuid-123"
+      selector:
+        text:
+
+vm_reset:
+  target:
+    entity:
+      domain: switch
+      integration: unraid_connect
+  fields:
+    vm_id:
+      required: false
+      example: "vm-uuid-123"
+      selector:
+        text:
+
+vm_force_stop:
+  target:
+    entity:
+      domain: switch
+      integration: unraid_connect
+  fields:
+    vm_id:
+      required: false
+      example: "vm-uuid-123"
+      selector:
+        text:
+
+# Docker services
+docker_restart:
+  target:
+    entity:
+      domain: switch
+      integration: unraid_connect
+  fields:
+    container_id:
+      required: false
+      example: "container-id-123"
+      selector:
+        text:
+
+docker_logs:
+  target:
+    entity:
+      domain: switch
+      integration: unraid_connect
+  fields:
+    container_id:
+      required: false
+      example: "container-id-123"
+      selector:
+        text:
+    lines:
+      required: false
+      default: 100
+      example: 50
+      selector:
+        number:
+          min: 1
+          max: 1000
+          step: 1
