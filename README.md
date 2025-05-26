@@ -175,6 +175,48 @@ This integration is in beta because the underlying Unraid GraphQL API is still u
 - **Performance**: Some operations may be slower than expected
 - **Documentation**: Unraid's GraphQL API documentation is still evolving
 
+### Known API Issues (Tracked in Unraid Repository)
+
+Based on analysis of the [Unraid API repository](https://github.com/unraid/api), the following issues affect this integration:
+
+- **VM Query Issues** ([#1392](https://github.com/unraid/api/issues/1392)): VM queries may fail intermittently
+- **Memory Limitations** ([#1375](https://github.com/unraid/api/issues/1375)): Memory values limited to 32-bit integers
+- **Parity Check Issues** ([#1372](https://github.com/unraid/api/issues/1372)): Parity check queries may not work reliably
+- **Missing Plugin Support** ([#1350](https://github.com/unraid/api/issues/1350)): No GraphQL endpoints for plugin management
+- **Disk Spin Status** ([#1315](https://github.com/unraid/api/issues/1315)): No API to detect if disks are spinning
+
+### Feature Comparison with SSH Integration
+
+| Feature | Connect (GraphQL) | SSH Integration | Notes |
+|---------|-------------------|-----------------|-------|
+| **System Monitoring** |
+| CPU Usage | ✅ | ✅ | Both provide real-time data |
+| Memory Usage | ⚠️ | ✅ | Connect limited to 32-bit values |
+| Disk Usage | ✅ | ✅ | Connect provides more detailed info |
+| Temperatures | ✅ | ✅ | Connect has better sensor coverage |
+| **Array Management** |
+| Array Status | ✅ | ✅ | Connect provides more detailed states |
+| Disk Health | ✅ | ✅ | Connect has structured health data |
+| Parity Operations | ⚠️ | ✅ | Connect has known issues |
+| Disk Spin Status | ❌ | ✅ | Missing from GraphQL API |
+| **Container Management** |
+| Docker Control | ✅ | ✅ | Both support start/stop/restart |
+| Container Logs | ✅ | ✅ | Connect provides structured access |
+| **VM Management** |
+| VM Control | ⚠️ | ✅ | Connect has query reliability issues |
+| VM Status | ⚠️ | ✅ | Intermittent failures in Connect |
+| **Advanced Features** |
+| User Scripts | ❌ | ✅ | Not available in GraphQL API |
+| UPS Monitoring | ❌ | ✅ | Not exposed via GraphQL |
+| Plugin Management | ❌ | ✅ | No GraphQL endpoints |
+| System Fans | ❌ | ✅ | Not available in GraphQL API |
+| **Reliability** |
+| Connection Stability | ⚠️ | ✅ | Connect depends on plugin stability |
+| Error Handling | ✅ | ⚠️ | Connect has better structured errors |
+| Performance | ✅ | ⚠️ | Connect is more efficient when working |
+
+**Legend**: ✅ Fully Supported | ⚠️ Partial/Issues | ❌ Not Available
+
 ### Semantic Versioning
 
 This project follows [Semantic Versioning](https://semver.org/):
@@ -236,6 +278,8 @@ logger:
 
 ## Contributing
 
+### Contributing to This Integration
+
 Contributions are welcome! Please:
 
 1. Fork the repository
@@ -243,6 +287,17 @@ Contributions are welcome! Please:
 3. Make your changes
 4. Add tests if applicable
 5. Submit a pull request
+
+### Contributing to Unraid API Development
+
+Since this integration depends on the evolving Unraid GraphQL API, you can also help by:
+
+1. **Reporting API Issues**: Submit detailed bug reports to the [Unraid API repository](https://github.com/unraid/api/issues)
+2. **Feature Requests**: Request missing GraphQL endpoints needed for Home Assistant integration
+3. **Testing**: Help test new API releases and report compatibility issues
+4. **Documentation**: Improve API documentation and integration guides
+
+See our [Proposed API Issues](PROPOSED_UNRAID_API_ISSUES.md) document for specific improvements needed in the Unraid GraphQL API.
 
 ## License
 
