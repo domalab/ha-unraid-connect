@@ -29,9 +29,11 @@ This integration requires the **Unraid Connect** plugin to be installed on your 
 1. Install the Unraid Connect plugin from the Community Applications
 2. Configure the plugin and obtain an API key
 3. **Important**: Add your Home Assistant URL to the "API extra origins" setting:
+
    ```
    http://YOUR_HA_IP:8123
    ```
+
 4. Click **APPLY** after adding the origin (this step is crucial!)
 
 ## Installation
@@ -101,6 +103,7 @@ The integration creates various entities organized by category:
 ### Disk Entities
 
 For each disk in your array:
+
 - **Disk Health**: Binary sensor indicating disk status
 - **Disk Space Used**: Individual disk usage with size and type attributes
 - **Temperature**: Disk temperature (when available)
@@ -108,12 +111,14 @@ For each disk in your array:
 ### Docker Container Entities
 
 For each Docker container:
+
 - **Container Switch**: Start/stop container control
 - **Container Status**: Binary sensor for running state
 
 ### Virtual Machine Entities
 
 For each VM:
+
 - **VM Switch**: Start/stop VM control
 - **VM Status**: Binary sensor for running state
 
@@ -131,6 +136,7 @@ For each VM:
 The integration provides comprehensive services for automation:
 
 ### Array Services
+
 - `unraid.start_array`: Start the disk array
 - `unraid.stop_array`: Stop the disk array
 - `unraid.start_parity_check`: Start parity check (with optional correction)
@@ -139,10 +145,12 @@ The integration provides comprehensive services for automation:
 - `unraid.cancel_parity_check`: Cancel parity check
 
 ### System Services
+
 - `unraid.reboot`: Reboot the server
 - `unraid.shutdown`: Shutdown the server
 
 ### Virtual Machine Services
+
 - `unraid.start_vm`: Start a VM
 - `unraid.stop_vm`: Stop a VM (with optional force)
 - `unraid.pause_vm`: Pause a VM
@@ -151,6 +159,7 @@ The integration provides comprehensive services for automation:
 - `unraid.manage_vm`: Unified VM management service
 
 ### Docker Services
+
 - `unraid.docker_restart`: Restart a container
 - `unraid.docker_logs`: Get container logs
 
@@ -190,23 +199,27 @@ When reporting issues, please include:
 ### Common Issues
 
 **Authentication Failed**
+
 - Verify your API key is correct
 - Ensure you've added your HA URL to Unraid Connect's "API extra origins"
 - Make sure you clicked "APPLY" after adding the origin
 - Try using the HTTPS URL if your server redirects
 
 **Cannot Connect**
+
 - Check if the Unraid Connect plugin is running
 - Verify the server URL is accessible from Home Assistant
 - Ensure firewall settings allow the connection
 - Try disabling SSL verification if using self-signed certificates
 
 **Missing Entities**
+
 - Some entities only appear when the corresponding services are available
 - VMs require the VM service to be enabled in Unraid
 - Docker entities require containers to be present
 
 **Slow Updates**
+
 - Adjust the scan interval in integration options
 - The integration uses intelligent caching to minimize API calls
 - Some data is cached longer than others to balance performance and freshness
@@ -234,11 +247,6 @@ Contributions are welcome! Please:
 ## License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
-
-## Support
-
-- [GitHub Issues](https://github.com/domalab/ha-unraid-connect/issues)
-- [Home Assistant Community Forum](https://community.home-assistant.io/)
 
 ---
 
