@@ -4,6 +4,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.1.0%2B-blue.svg)](https://www.home-assistant.io/)
 [![Version](https://img.shields.io/badge/Version-0.1.0--beta.1-orange.svg)](https://github.com/domalab/ha-unraid-connect/releases)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/domalab/ha-unraid-connect)
 
 > **⚠️ BETA SOFTWARE WARNING**
 > This integration is currently in **beta phase**. The Unraid GraphQL API is still under active development by the Unraid team, and many features may not work as expected or may be unavailable. Use at your own risk and expect breaking changes.
