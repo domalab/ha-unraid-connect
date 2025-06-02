@@ -48,6 +48,11 @@ This integration requires the **Unraid Connect** plugin to be installed on your 
 6. Select "Integration" as the category
 7. Click "Add"
 8. Find "Unraid Connect" in the integration list and install it
+
+**Alternatively, click the badge below to directly open this repository in HACS:**
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=domalab&repository=ha-unraid-connect&category=integration)
+
 9. Restart Home Assistant
 
 ### Manual Installation
