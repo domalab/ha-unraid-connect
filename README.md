@@ -18,7 +18,6 @@ A comprehensive Home Assistant integration for monitoring and controlling Unraid
 - **Docker Container Control**: Monitor and control Docker containers
 - **Real-time Updates**: Configurable polling intervals with intelligent caching
 - **Comprehensive Services**: Control array, Docker containers, and system operations
-- **CORS Support**: Proper handling of cross-origin requests
 
 ## Prerequisites
 
