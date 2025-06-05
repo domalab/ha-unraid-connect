@@ -8,5 +8,5 @@
   "iot_class": "local_polling",
   "quality_scale": "silver",
   "requirements": ["python-dateutil==2.8.2"],
-  "version": "0.1.0-beta.4"
+  "version": "0.1.0-beta.5"
 }
