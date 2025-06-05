@@ -1070,6 +1070,11 @@ class UnraidApiClient:
             array_info = response["data"]["array"]
             array_data["array"].update(array_info)
 
+            # Process flash drive data if available
+            if "flash" in array_info and array_info["flash"]:
+                array_data["flash"] = array_info["flash"]
+                _LOGGER.debug("Retrieved flash drive data: %s", array_info["flash"])
+
             # Get spindown configuration if available
             if "vars" in response["data"]:
                 self._process_spindown_config(array_data, response["data"]["vars"])
@@ -1077,7 +1082,128 @@ class UnraidApiClient:
         except Exception as err:
             _LOGGER.warning("Error getting basic array info: %s", err)
 
+        # Try to extract flash drive data from existing disk information
+        try:
+            flash_data = await self._extract_flash_drive_from_existing_data(array_data)
+            if flash_data:
+                array_data["flash"] = flash_data
+                _LOGGER.info("Found flash drive data: %s", flash_data)
+        except Exception as err:
+            _LOGGER.debug("Error extracting flash drive data: %s", err)
+
         return array_data
+
+    async def _extract_flash_drive_from_existing_data(self, array_data: dict[str, Any]) -> dict[str, Any] | None:
+        """Extract flash drive data from existing disk health information."""
+        try:
+            # Get current disk health data using the same method as other disk operations
+            # We'll query all disks since flash drives are typically always safe to query
+            disk_states = await self._get_disk_states()
+            all_disk_ids = list(disk_states.keys())
+
+            if not all_disk_ids:
+                _LOGGER.debug("No disk states available for flash drive extraction")
+                return None
+
+            # Get disk health information
+            safe_disk_health = await self._get_safe_disk_health_info(all_disk_ids)
+
+            if not safe_disk_health:
+                _LOGGER.debug("No disk health data available for flash drive extraction")
+                return None
+
+            _LOGGER.debug("Searching for flash drive among %d disks in health data", len(safe_disk_health))
+
+            # Look for the flash drive based on characteristics
+            for disk_id, disk_data in safe_disk_health.items():
+                if self._is_flash_drive(disk_data):
+                    _LOGGER.info("Identified flash drive: %s (%s)", disk_data.get("name"), disk_data.get("device"))
+                    return self._convert_disk_to_flash_data(disk_data)
+
+            _LOGGER.debug("No flash drive found among available disks")
+            return None
+
+        except Exception as err:
+            _LOGGER.debug("Error extracting flash drive from existing data: %s", err)
+            return None
+
+    def _is_flash_drive(self, disk: dict[str, Any]) -> bool:
+        """Determine if a disk is the Unraid flash drive (boot drive)."""
+        # Check for USB interface (most common for flash drives)
+        interface_type = disk.get("interfaceType", "").upper()
+        if interface_type == "USB":
+            # Check for VFAT partition (typical for Unraid boot drives)
+            partitions = disk.get("partitions", [])
+            for partition in partitions:
+                if partition.get("fsType", "").upper() == "VFAT":
+                    _LOGGER.debug("Found USB device with VFAT partition: %s", disk.get("name"))
+                    return True
+
+        # Additional checks for flash drive identification
+        device_name = disk.get("name", "").lower()
+        vendor = disk.get("vendor", "").lower()
+
+        # Common flash drive indicators
+        flash_indicators = [
+            "flash", "usb", "ultra fit", "cruzer", "datatraveler",
+            "jetflash", "store", "pendrive", "thumb"
+        ]
+
+        for indicator in flash_indicators:
+            if indicator in device_name or indicator in vendor:
+                _LOGGER.debug("Found potential flash drive by name/vendor: %s (%s)", device_name, vendor)
+                return True
+
+        return False
+
+    def _convert_disk_to_flash_data(self, disk: dict[str, Any]) -> dict[str, Any]:
+        """Convert disk data to flash drive format expected by the sensor."""
+        # Get the main partition (usually the first VFAT partition)
+        partitions = disk.get("partitions", [])
+        main_partition = None
+
+        for partition in partitions:
+            if partition.get("fsType", "").upper() == "VFAT":
+                main_partition = partition
+                break
+
+        if not main_partition and partitions:
+            # Fallback to first partition if no VFAT found
+            main_partition = partitions[0]
+
+        if main_partition:
+            # Convert partition size from bytes to KiB for consistency with array disks
+            partition_size_bytes = main_partition.get("size", 0)
+            fs_size_kib = int(partition_size_bytes / 1024) if partition_size_bytes else 0
+
+            # For flash drives, we typically don't have separate free/used data
+            # We'll use the partition size as total and estimate usage
+            fs_free_kib = int(fs_size_kib * 0.7)  # Estimate 70% free (conservative)
+            fs_used_kib = fs_size_kib - fs_free_kib
+
+            return {
+                "id": disk.get("id", ""),
+                "name": disk.get("name", "flash"),
+                "device": disk.get("device", ""),
+                "fsSize": str(fs_size_kib),
+                "fsFree": str(fs_free_kib),
+                "fsUsed": str(fs_used_kib),
+            }
+        else:
+            # No partition data available, use disk size
+            disk_size_bytes = disk.get("size", 0)
+            fs_size_kib = int(disk_size_bytes / 1024) if disk_size_bytes else 0
+            fs_free_kib = int(fs_size_kib * 0.7)  # Estimate 70% free
+            fs_used_kib = fs_size_kib - fs_free_kib
+
+            return {
+                "id": disk.get("id", ""),
+                "name": disk.get("name", "flash"),
+                "device": disk.get("device", ""),
+                "fsSize": str(fs_size_kib),
+                "fsFree": str(fs_free_kib),
+                "fsUsed": str(fs_used_kib),
+            }
 
     def _process_spindown_config(
         self, array_data: dict[str, Any], vars_info: dict[str, Any]

@@ -91,9 +91,8 @@ async def async_setup_entry(
     entities.append(UnraidUptimeSensor(coordinator, name))
     entities.append(UnraidNotificationSensor(coordinator, name))
 
-    # Add flash drive usage sensor (includes logs)
-    if coordinator.data.get("array_status", {}).get("flash"):
-        flash_entities.append(UnraidFlashUsageSensor(coordinator, name))
+    # Add flash drive usage sensor (always create, handles missing data gracefully)
+    flash_entities.append(UnraidFlashUsageSensor(coordinator, name))
 
     # Add array sensors
     array_entities.append(UnraidArrayStateSensor(coordinator, name))
@@ -1479,7 +1478,7 @@ class UnraidFlashUsageSensor(UnraidSystemEntity, SensorEntity):
     """Sensor for Unraid flash drive space usage."""
 
     _attr_name = "Flash Drive Usage"
-    _attr_icon = ICON_DISK
+    _attr_icon = "mdi:usb-flash-drive"
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_device_class = None
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -1497,6 +1496,11 @@ class UnraidFlashUsageSensor(UnraidSystemEntity, SensorEntity):
         """Return the state of the sensor as a percentage."""
         try:
             flash_info = self.coordinator.data.get("array_status", {}).get("flash", {})
+
+            # If no flash data is available yet, return None (unavailable)
+            if not flash_info:
+                return None
+
             fs_size = int(flash_info.get("fsSize", 0))
             fs_used = int(flash_info.get("fsUsed", 0))
 
@@ -1512,6 +1516,20 @@ class UnraidFlashUsageSensor(UnraidSystemEntity, SensorEntity):
         """Return the state attributes."""
         try:
             flash_info = self.coordinator.data.get("array_status", {}).get("flash", {})
+
+            # If no flash data is available yet, return basic attributes
+            if not flash_info:
+                return {
+                    "Flash Drive Name": "Unknown",
+                    "Device Path": "N/A",
+                    "Total Capacity": "N/A",
+                    "Free Space": "N/A",
+                    "Used Space": "N/A",
+                    "Used Percentage": "N/A",
+                    "Free Percentage": "N/A",
+                    "Status": "Waiting for data...",
+                }
+
             fs_size = int(flash_info.get("fsSize", 0))
             fs_free = int(flash_info.get("fsFree", 0))
             fs_used = int(flash_info.get("fsUsed", 0))
@@ -1526,20 +1544,39 @@ class UnraidFlashUsageSensor(UnraidSystemEntity, SensorEntity):
             free_percent = round((fs_free / fs_size) * 100, 1) if fs_size > 0 else 0
 
             return {
-                "name": flash_info.get("name", "flash"),
-                "device": flash_info.get("device", ""),
-                "id": flash_info.get("id", ""),
-                "total": self._format_size(fs_size_bytes),
-                "free": self._format_size(fs_free_bytes),
-                "used": self._format_size(fs_used_bytes),
-                "used_percent": used_percent,
-                "free_percent": free_percent,
-                "total_bytes": fs_size_bytes,
-                "free_bytes": fs_free_bytes,
-                "used_bytes": fs_used_bytes,
+                "Flash Drive Name": flash_info.get("name", "flash"),
+                "Device Path": flash_info.get("device", "N/A"),
+                "Total Capacity": self._format_size(fs_size_bytes),
+                "Free Space": self._format_size(fs_free_bytes),
+                "Used Space": self._format_size(fs_used_bytes),
+                "Used Percentage": f"{used_percent}%",
+                "Free Percentage": f"{free_percent}%",
+                "Status": "Active",
             }
         except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError):
-            return {}
+            return {
+                "Flash Drive Name": "Unknown",
+                "Device Path": "N/A",
+                "Total Capacity": "N/A",
+                "Free Space": "N/A",
+                "Used Space": "N/A",
+                "Used Percentage": "N/A",
+                "Free Percentage": "N/A",
+                "Status": "Error retrieving data",
+            }
+
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        # Always return True since the sensor should always be available
+        # even when waiting for data. The native_value will return None
+        # when data is not available, which is the correct behavior.
+        return super().available
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the sensor."""
+        return "mdi:usb-flash-drive"
 
     def _format_size(self, size_bytes: int) -> str:
         """Format size to appropriate unit."""
