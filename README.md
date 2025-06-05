@@ -13,12 +13,11 @@ A comprehensive Home Assistant integration for monitoring and controlling Unraid
 
 ## Features
 
-- **System Monitoring**: CPU usage, memory usage, temperatures, uptime, and system information
+- **System Monitoring**: Uptime, and system information
 - **Array Management**: Array status, disk health, space usage, and parity operations
 - **Docker Container Control**: Monitor and control Docker containers
-- **Virtual Machine Management**: Start, stop, pause, and monitor VMs
 - **Real-time Updates**: Configurable polling intervals with intelligent caching
-- **Comprehensive Services**: Control array, VMs, Docker containers, and system operations
+- **Comprehensive Services**: Control array, Docker containers, and system operations
 - **CORS Support**: Proper handling of cross-origin requests
 
 ## Prerequisites
@@ -28,14 +27,7 @@ A comprehensive Home Assistant integration for monitoring and controlling Unraid
 This integration requires the **Unraid Connect** plugin to be installed on your Unraid server:
 
 1. Install the Unraid Connect plugin from the Community Applications
-2. Configure the plugin and obtain an API key
-3. **Important**: Add your Home Assistant URL to the "API extra origins" setting:
-
-   ```
-   http://YOUR_HA_IP:8123
-   ```
-
-4. Click **APPLY** after adding the origin (this step is crucial!)
+2. Configure the plugin and obtain an API key - https://docs.unraid.net/API/how-to-use-the-api/
 
 ## Installation
 
@@ -91,10 +83,6 @@ The integration creates various entities organized by category:
 
 - **System State**: Overall system status and information
 - **Online Status**: Binary sensor for server connectivity
-- **CPU Usage**: Percentage with detailed attributes (cores, threads, brand)
-- **Memory Usage**: RAM usage percentage with total/available memory
-- **CPU Temperature**: Processor temperature monitoring
-- **Motherboard Temperature**: System board temperature
 - **Uptime**: Server uptime in days
 - **Notifications**: Count of active Unraid notifications
 
@@ -104,7 +92,6 @@ The integration creates various entities organized by category:
 - **Array Running**: Binary sensor for array operational status
 - **Array Space Used**: Used storage space with total/free as attributes
 - **Array Space Free**: Available storage space
-- **Flash Usage**: USB flash drive usage
 
 ### Disk Entities
 
@@ -112,7 +99,6 @@ For each disk in your array:
 
 - **Disk Health**: Binary sensor indicating disk status
 - **Disk Space Used**: Individual disk usage with size and type attributes
-- **Temperature**: Disk temperature (when available)
 
 ### Docker Container Entities
 
@@ -120,13 +106,6 @@ For each Docker container:
 
 - **Container Switch**: Start/stop container control
 - **Container Status**: Binary sensor for running state
-
-### Virtual Machine Entities
-
-For each VM:
-
-- **VM Switch**: Start/stop VM control
-- **VM Status**: Binary sensor for running state
 
 ### Control Buttons
 
@@ -154,15 +133,6 @@ The integration provides comprehensive services for automation:
 
 - `unraid.reboot`: Reboot the server
 - `unraid.shutdown`: Shutdown the server
-
-### Virtual Machine Services
-
-- `unraid.start_vm`: Start a VM
-- `unraid.stop_vm`: Stop a VM (with optional force)
-- `unraid.pause_vm`: Pause a VM
-- `unraid.resume_vm`: Resume a paused VM
-- `unraid.reboot_vm`: Reboot a VM
-- `unraid.manage_vm`: Unified VM management service
 
 ### Docker Services
 
@@ -249,8 +219,6 @@ When reporting issues, please include:
 **Authentication Failed**
 
 - Verify your API key is correct
-- Ensure you've added your HA URL to Unraid Connect's "API extra origins"
-- Make sure you clicked "APPLY" after adding the origin
 - Try using the HTTPS URL if your server redirects
 
 **Cannot Connect**
@@ -263,7 +231,6 @@ When reporting issues, please include:
 **Missing Entities**
 
 - Some entities only appear when the corresponding services are available
-- VMs require the VM service to be enabled in Unraid
 - Docker entities require containers to be present
 
 **Slow Updates**
