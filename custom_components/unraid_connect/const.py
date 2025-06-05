@@ -1,6 +1,6 @@
 """Constants for the Unraid integration."""
 
-DOMAIN = "unraid"
+DOMAIN = "unraid_connect"
 DEFAULT_NAME = "Unraid Connect"
 DEFAULT_SCAN_INTERVAL = 30
 
@@ -46,24 +46,9 @@ DISK_STATUS_NP_DSBL = "DISK_NP_DSBL"
 DISK_STATUS_DSBL_NEW = "DISK_DSBL_NEW"
 DISK_STATUS_NEW = "DISK_NEW"
 
-# Disk states for spindown awareness
-DISK_STATE_ACTIVE = "ACTIVE"
-DISK_STATE_STANDBY = "STANDBY"
-DISK_STATE_SPUN_DOWN = "SPUN_DOWN"
-DISK_STATE_UNKNOWN = "UNKNOWN"
-
-# Disk types that typically don't spin down (SSDs, NVMe)
-NON_ROTATIONAL_DISK_TYPES = ["SSD", "NVME", "CACHE"]
-
-# Spindown configuration constants
-# Based on actual Unraid behavior:
-# 0 = Default/unconfigured (typically 30 minutes)
-# 15, 30, 45 = Minutes
-# 1-9 = Hours
-# -1 = Never spin down
-SPINDOWN_DEFAULT = 0  # Default/unconfigured state
-SPINDOWN_NEVER = -1   # Never spin down
-SPINDOWN_DEFAULT_MINUTES = 30  # Default spindown time when unconfigured
+# Note: Disk spindown state detection has been removed as the Unraid Connect GraphQL API
+# does not provide reliable disk power state information (ACTIVE/STANDBY/SPUN_DOWN).
+# The integration now queries all disk health data every cycle for consistent monitoring.
 
 # VM States
 VM_STATE_RUNNING = "RUNNING"

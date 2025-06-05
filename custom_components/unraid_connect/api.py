@@ -14,14 +14,6 @@ from aiohttp.client_exceptions import ClientResponseError
 from .const import (
     API_TIMEOUT,
     BASE_GRAPHQL_URL,
-    DISK_STATE_ACTIVE,
-    DISK_STATE_STANDBY,
-    DISK_STATE_SPUN_DOWN,
-    DISK_STATE_UNKNOWN,
-    NON_ROTATIONAL_DISK_TYPES,
-    SPINDOWN_DEFAULT,
-    SPINDOWN_NEVER,
-    SPINDOWN_DEFAULT_MINUTES,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -76,11 +68,7 @@ class UnraidApiClient:
         self._skip_disk_details: bool = False
         self.version: str = "Unknown"
 
-        # Disk state management for intelligent spindown awareness
-        self._disk_states: dict[str, dict[str, Any]] = {}
-        self._spindown_config: dict[str, Any] = {}
-        self._last_disk_state_check: float = 0
-        self._disk_state_cache_duration = 30  # Cache disk states for 30 seconds
+        # Note: Disk state management variables removed as spindown protection has been disabled
 
         # Standard API key header
         self.headers = {
@@ -231,177 +219,26 @@ class UnraidApiClient:
         except Exception as err:
             raise UnraidApiError("Unknown", f"Unknown error: {err}") from err
 
-    async def _get_disk_states(self, force_refresh: bool = False) -> dict[str, dict[str, Any]]:
-        """Get current disk states with caching to avoid frequent API calls."""
-        import time
+    # Note: _get_disk_states method removed as the Unraid Connect GraphQL API does not provide
+    # disk power state information. The integration now queries disk health data directly.
 
-        current_time = time.time()
+    # Note: Spindown detection methods removed as the Unraid Connect GraphQL API does not provide
+    # reliable disk power state information. All disks are now queried consistently.
 
-        # Use cached data if it's still fresh and not forcing refresh
-        if (
-            not force_refresh
-            and self._disk_states
-            and (current_time - self._last_disk_state_check) < self._disk_state_cache_duration
-        ):
-            _LOGGER.debug("Using cached disk states")
-            return self._disk_states
+    async def _get_disk_health_info(self, disk_ids: list[str] | None = None) -> dict[str, dict[str, Any]]:
+        """Get disk health information for all disks.
 
-        try:
-            # Query basic disk information that doesn't wake sleeping disks
-            # According to the official Unraid API schema, this query is safe
-            disk_state_query = """
-            query GetDiskStates {
-                disks {
-                    id
-                    name
-                    device
-                    type
-                    vendor
-                    size
-                }
-            }
-            """
+        Note: Spindown protection has been removed as the Unraid Connect GraphQL API
+        does not provide reliable disk power state information. All disks are now
+        queried consistently to ensure accurate monitoring data.
 
-            _LOGGER.debug("Fetching current disk states")
-            response = await self._send_graphql_request(disk_state_query)
-
-            if "data" in response and "disks" in response["data"]:
-                disks = response["data"]["disks"]
-
-                # Update our disk states cache
-                self._disk_states = {}
-                for disk in disks:
-                    disk_id = disk.get("id")
-                    if disk_id:
-                        # Determine if this is a non-rotational disk (SSD/NVMe)
-                        disk_type = disk.get("type", "").upper()
-                        is_non_rotational = disk_type in NON_ROTATIONAL_DISK_TYPES
-
-                        self._disk_states[disk_id] = {
-                            "id": disk_id,
-                            "name": disk.get("name"),
-                            "device": disk.get("device"),
-                            "type": disk_type,
-                            "vendor": disk.get("vendor"),
-                            "size": disk.get("size"),
-                            "is_non_rotational": is_non_rotational,
-                            "state": DISK_STATE_UNKNOWN,  # Will be determined by detailed queries
-                            "last_known_temp": None,
-                            "last_known_smart_status": None,
-                        }
-
-                self._last_disk_state_check = current_time
-                _LOGGER.debug("Updated disk states cache with %d disks", len(self._disk_states))
-
-        except Exception as err:
-            _LOGGER.debug("Error getting disk states: %s", err)
-            # Return cached data if available, otherwise empty dict
-            if not self._disk_states:
-                self._disk_states = {}
-
-        return self._disk_states
-
-    def _is_spindown_enabled(self) -> bool:
-        """Check if spindown is enabled based on configuration.
-
-        Returns True if spindown is enabled (any value except -1 'never').
-        Returns False only if spindown is explicitly set to 'never' (-1).
+        Args:
+            disk_ids: Optional list of disk IDs to filter. If None or empty, queries all disks.
         """
-        spindown_delay = self._spindown_config.get("delay", SPINDOWN_DEFAULT)
-
-        # Convert string to int if needed
-        if isinstance(spindown_delay, str):
-            try:
-                spindown_delay = int(spindown_delay)
-            except (ValueError, TypeError):
-                spindown_delay = SPINDOWN_DEFAULT
-
-        # Spindown is enabled unless explicitly set to "never" (-1)
-        # 0 = default (30 minutes), 15/30/45 = minutes, 1-9 = hours
-        # Only -1 means "never spin down"
-        return spindown_delay != SPINDOWN_NEVER
-
-    def _should_query_disk_details(self, disk_id: str) -> bool:
-        """Determine if we should query detailed information for a specific disk."""
-        # If spindown is set to "never" (-1), we can query all disks safely
-        if not self._is_spindown_enabled():
-            _LOGGER.debug("Spindown set to NEVER, querying all disk details")
-            return True
-
-        # Get disk state information
-        disk_state = self._disk_states.get(disk_id, {})
-
-        # Always query non-rotational disks (SSDs, NVMe) as they don't spin down
-        if disk_state.get("is_non_rotational", False):
-            _LOGGER.debug("Disk %s is non-rotational, safe to query", disk_state.get("name"))
-            return True
-
-        # Check the actual spindown delay value
-        spindown_delay = self._spindown_config.get("delay", SPINDOWN_DEFAULT)
-        try:
-            delay_value = int(spindown_delay)
-        except (ValueError, TypeError):
-            delay_value = SPINDOWN_DEFAULT
-
-        # For default spindown (delay=0), query disks normally
-        # This is the factory default and most common setting
-        if delay_value == SPINDOWN_DEFAULT:
-            _LOGGER.debug("Disk %s: using default spindown, safe to query", disk_state.get("name"))
-            return True
-
-        # For rotational disks with explicit spindown times (15, 30, 45 minutes or 1-9 hours):
-        # Be more conservative to avoid waking sleeping disks
-        _LOGGER.debug(
-            "Disk %s is rotational with explicit spindown delay %s, being conservative",
-            disk_state.get("name"), spindown_delay
-        )
-        return False
-
-    async def _get_safe_disk_health_info(self, disk_ids: list[str]) -> dict[str, dict[str, Any]]:
-        """Get disk health information only for disks that are safe to query."""
-        safe_disk_health = {}
-
-        if not disk_ids:
-            return safe_disk_health
-
-        # Get current disk states
-        disk_states = await self._get_disk_states()
-
-        # Debug: Log the disk IDs we're trying to match
-        _LOGGER.debug("Requested disk IDs: %s", disk_ids)
-        _LOGGER.debug("Available disk states: %s", list(disk_states.keys()))
-
-        # Determine which disks are safe to query
-        safe_disk_ids = []
-        for disk_id in disk_ids:
-            if self._should_query_disk_details(disk_id):
-                safe_disk_ids.append(disk_id)
-
-        # If no disk IDs match our states, we need to query all disks and match by device/name
-        if not safe_disk_ids:
-            _LOGGER.debug("No disk IDs matched states, will query all disks and match by device/name")
-
-            # Check the actual spindown configuration
-            spindown_delay = self._spindown_config.get("delay", SPINDOWN_DEFAULT)
-            try:
-                delay_value = int(spindown_delay)
-            except (ValueError, TypeError):
-                delay_value = SPINDOWN_DEFAULT
-
-            # Query all disks when:
-            # 1. Spindown is set to "never" (-1), OR
-            # 2. Using default spindown (delay=0) - this is the common case
-            if not self._is_spindown_enabled():
-                _LOGGER.debug("Spindown set to NEVER, querying all disks for health info")
-            elif delay_value == SPINDOWN_DEFAULT:
-                _LOGGER.debug("Using default spindown (delay=0), querying all disks for health info")
-            else:
-                _LOGGER.debug("Explicit spindown delay %s configured, being conservative with disk queries", spindown_delay)
-                return safe_disk_health
+        disk_health = {}
 
         try:
-            # Query detailed health information only for safe disks
-            # We'll use a comprehensive query but only process results for safe disks
+            # Query detailed health information for all disks
             health_query = """
             query GetDiskHealthInfo {
                 disks {
@@ -425,64 +262,32 @@ class UnraidApiClient:
             }
             """
 
-            _LOGGER.debug("Querying health info for %d safe disks", len(safe_disk_ids))
+            _LOGGER.debug("Querying health info for all disks")
             response = await self._send_graphql_request(health_query)
 
             if "data" in response and "disks" in response["data"]:
                 all_disks = response["data"]["disks"]
 
-                # Check spindown configuration to determine processing strategy
-                spindown_delay = self._spindown_config.get("delay", SPINDOWN_DEFAULT)
-                try:
-                    delay_value = int(spindown_delay)
-                except (ValueError, TypeError):
-                    delay_value = SPINDOWN_DEFAULT
+                # Process all disks - no spindown restrictions
+                for disk in all_disks:
+                    disk_id = disk.get("id")
+                    if disk_id:
+                        disk_health[disk_id] = disk
 
-                # Process all disks when:
-                # 1. Spindown is set to "never" (-1), OR
-                # 2. Using default spindown (delay=0) - this is the common case
-                if not self._is_spindown_enabled() or delay_value == SPINDOWN_DEFAULT:
-                    if not self._is_spindown_enabled():
-                        _LOGGER.debug("Spindown set to NEVER, processing all %d disks", len(all_disks))
-                    else:
-                        _LOGGER.debug("Using default spindown (delay=0), processing all %d disks", len(all_disks))
-                    for disk in all_disks:
-                        disk_id = disk.get("id")
-                        if disk_id:
-                            safe_disk_health[disk_id] = disk
-
-                            # Update our disk states cache with the health information
-                            if disk_id in self._disk_states:
-                                self._disk_states[disk_id]["last_known_temp"] = disk.get("temperature")
-                                self._disk_states[disk_id]["last_known_smart_status"] = disk.get("smartStatus")
-                                self._disk_states[disk_id]["state"] = DISK_STATE_ACTIVE  # If we got data, it's active
-                else:
-                    # Process only the safe disks when spindown is enabled
-                    for disk in all_disks:
-                        disk_id = disk.get("id")
-                        if disk_id in safe_disk_ids:
-                            safe_disk_health[disk_id] = disk
-
-                            # Update our disk states cache with the health information
-                            if disk_id in self._disk_states:
-                                self._disk_states[disk_id]["last_known_temp"] = disk.get("temperature")
-                                self._disk_states[disk_id]["last_known_smart_status"] = disk.get("smartStatus")
-                                self._disk_states[disk_id]["state"] = DISK_STATE_ACTIVE  # If we got data, it's active
-
-                _LOGGER.debug("Retrieved health info for %d disks", len(safe_disk_health))
+                _LOGGER.debug("Retrieved health info for %d disks", len(disk_health))
 
         except Exception as err:
-            _LOGGER.debug("Error getting safe disk health info: %s", err)
+            _LOGGER.debug("Error getting disk health info: %s", err)
 
-        return safe_disk_health
+        return disk_health
 
-    def _find_matching_health_data(self, disk: dict[str, Any], safe_disk_health: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    def _find_matching_health_data(self, disk: dict[str, Any], disk_health: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
         """Find matching health data for a disk by ID, device, or name."""
         disk_id = disk.get("id")
 
         # First try to match by disk ID
-        if disk_id in safe_disk_health:
-            return safe_disk_health[disk_id]
+        if disk_id and disk_id in disk_health:
+            return disk_health[disk_id]
 
         # Extract serial number from array disk ID for matching
         # Array IDs format: prefix:DEVICE_NAME_SERIAL
@@ -502,7 +307,7 @@ class UnraidApiClient:
 
         # Try to match by serial number in health data IDs
         if disk_serial:
-            for health_disk_id, health_disk_data in safe_disk_health.items():
+            for health_disk_id, health_disk_data in disk_health.items():
                 if health_disk_id.endswith(":" + disk_serial):
                     _LOGGER.debug("Matched disk %s by serial number %s", disk.get("name"), disk_serial)
                     return health_disk_data
@@ -511,7 +316,7 @@ class UnraidApiClient:
         disk_device = disk.get("device")
         disk_name = disk.get("name")
 
-        for health_disk_id, health_disk_data in safe_disk_health.items():
+        for health_disk_id, health_disk_data in disk_health.items():
             health_device = health_disk_data.get("device")
             health_name = health_disk_data.get("name")
 
@@ -1075,9 +880,8 @@ class UnraidApiClient:
                 array_data["flash"] = array_info["flash"]
                 _LOGGER.debug("Retrieved flash drive data: %s", array_info["flash"])
 
-            # Get spindown configuration if available
-            if "vars" in response["data"]:
-                self._process_spindown_config(array_data, response["data"]["vars"])
+            # Note: Spindown configuration processing removed as the API does not provide
+            # reliable disk power state information for spindown protection.
 
         except Exception as err:
             _LOGGER.warning("Error getting basic array info: %s", err)
@@ -1096,26 +900,18 @@ class UnraidApiClient:
     async def _extract_flash_drive_from_existing_data(self, array_data: dict[str, Any]) -> dict[str, Any] | None:
         """Extract flash drive data from existing disk health information."""
         try:
-            # Get current disk health data using the same method as other disk operations
-            # We'll query all disks since flash drives are typically always safe to query
-            disk_states = await self._get_disk_states()
-            all_disk_ids = list(disk_states.keys())
+            # Get disk health information for all disks
+            # Flash drives are USB devices so they're safe to query
+            disk_health = await self._get_disk_health_info()
 
-            if not all_disk_ids:
-                _LOGGER.debug("No disk states available for flash drive extraction")
-                return None
-
-            # Get disk health information
-            safe_disk_health = await self._get_safe_disk_health_info(all_disk_ids)
-
-            if not safe_disk_health:
+            if not disk_health:
                 _LOGGER.debug("No disk health data available for flash drive extraction")
                 return None
 
-            _LOGGER.debug("Searching for flash drive among %d disks in health data", len(safe_disk_health))
+            _LOGGER.debug("Searching for flash drive among %d disks in health data", len(disk_health))
 
             # Look for the flash drive based on characteristics
-            for disk_id, disk_data in safe_disk_health.items():
+            for disk_id, disk_data in disk_health.items():
                 if self._is_flash_drive(disk_data):
                     _LOGGER.info("Identified flash drive: %s (%s)", disk_data.get("name"), disk_data.get("device"))
                     return self._convert_disk_to_flash_data(disk_data)
@@ -1205,23 +1001,8 @@ class UnraidApiClient:
                 "fsUsed": str(fs_used_kib),
             }
 
-    def _process_spindown_config(
-        self, array_data: dict[str, Any], vars_info: dict[str, Any]
-    ) -> None:
-        """Process spindown configuration from vars info."""
-        spindown_delay = vars_info.get("spindownDelay", "0")
-        spinup_groups = vars_info.get("spinupGroups", False)
-
-        array_data["spindown_config"] = {
-            "delay": spindown_delay,
-            "groups_enabled": spinup_groups,
-        }
-
-        _LOGGER.debug(
-            "Spindown config: delay=%s, groups=%s",
-            spindown_delay,
-            spinup_groups,
-        )
+    # Note: Spindown configuration processing methods removed as the Unraid Connect GraphQL API
+    # does not provide reliable disk power state information for spindown protection.
 
     def _create_safe_parity_disk(
         self, parity: dict[str, Any], array_state: str
@@ -1358,7 +1139,7 @@ class UnraidApiClient:
         return array_data
 
     async def _update_cache_disk_temperatures(self, array_data: dict[str, Any]) -> None:
-        """Update cache disk temperatures and health information with spindown awareness."""
+        """Update cache disk temperatures and health information."""
         try:
             # Get cache disk IDs for intelligent querying
             cache_disk_ids = []
@@ -1371,16 +1152,15 @@ class UnraidApiClient:
                 _LOGGER.debug("No cache disks found to update")
                 return
 
-            # Update spindown configuration from array data
-            self._update_spindown_config(array_data)
+            # Note: Spindown configuration update removed
 
-            # Get safe disk health information using intelligent spindown awareness
-            safe_disk_health = await self._get_safe_disk_health_info(cache_disk_ids)
+            # Get disk health information for all disks
+            disk_health = await self._get_disk_health_info(cache_disk_ids)
 
             # Update cache disks with available health data
             for cache_disk in array_data["array"]["caches"]:
                 disk_id = cache_disk.get("id")
-                health_data = self._find_matching_health_data(cache_disk, safe_disk_health)
+                health_data = self._find_matching_health_data(cache_disk, disk_health)
 
                 if health_data:
                     # We have fresh health data for this disk
@@ -1392,26 +1172,11 @@ class UnraidApiClient:
         except UnraidApiError as err:
             _LOGGER.debug("API error getting cache disk temperatures: %s", err)
         except TimeoutError:
-            _LOGGER.debug(
-                "Timeout when getting cache disk temperatures - this is normal if disks are in standby"
-            )
+            _LOGGER.debug("Timeout when getting cache disk temperatures")
         except Exception as err:
             _LOGGER.debug("Error getting cache disk temperatures: %s", err)
 
-    def _update_spindown_config(self, array_data: dict[str, Any]) -> None:
-        """Update spindown configuration from array data."""
-        try:
-            if "spindown_config" in array_data:
-                self._spindown_config = array_data["spindown_config"]
-                _LOGGER.debug("Updated spindown config from array data: %s", self._spindown_config)
-
-                # If we see delay=0, try to get the actual configured value
-                delay = self._spindown_config.get("delay", "0")
-                if delay == "0" or delay == 0:
-                    _LOGGER.debug("Detected delay=0 (default/unconfigured), this may not reflect actual Unraid spindown setting")
-                    _LOGGER.debug("Your Unraid server may be configured for a specific spindown time that's not reflected in the GraphQL API")
-        except Exception as err:
-            _LOGGER.debug("Error updating spindown config: %s", err)
+    # Note: _update_spindown_config method removed as spindown protection has been disabled
 
     def _update_disk_with_health_data(self, disk: dict[str, Any], health_data: dict[str, Any]) -> None:
         """Update disk with fresh health data."""
@@ -1446,35 +1211,17 @@ class UnraidApiClient:
         disk["health_data_timestamp"] = time.time()
 
     def _update_disk_with_cached_data(self, disk: dict[str, Any], disk_id: str) -> None:
-        """Update disk with cached/last known data for sleeping disks."""
+        """Update disk with default data when health data is not available.
+
+        Note: Cached data functionality simplified as spindown state tracking has been removed.
+        """
         disk_name = disk.get("name", "unknown")
 
-        # Get cached disk state
-        disk_state = self._disk_states.get(disk_id, {})
+        # Mark as having no fresh data available
+        disk["health_data_source"] = "unavailable"
+        disk["health_note"] = "Health data not available from API"
 
-        # Use last known temperature if available
-        last_temp = disk_state.get("last_known_temp")
-        if last_temp is not None:
-            disk["temp"] = last_temp
-            disk["temperature"] = last_temp
-            _LOGGER.debug("Using cached temperature for disk %s: %s°C", disk_name, last_temp)
-
-        # Use last known SMART status if available
-        last_smart = disk_state.get("last_known_smart_status")
-        if last_smart is not None:
-            disk["smartStatus"] = last_smart
-            disk["health"] = "OK" if last_smart == "OK" else "WARNING"
-            _LOGGER.debug("Using cached SMART status for disk %s: %s", disk_name, last_smart)
-
-        # Mark as using cached data
-        disk["health_data_source"] = "cached"
-        disk["health_note"] = "Disk may be in standby - using last known values"
-
-        # Determine disk state for user information
-        if disk_state.get("is_non_rotational", False):
-            disk["disk_state_note"] = "SSD/NVMe - always available"
-        else:
-            disk["disk_state_note"] = "Rotational disk - may be in standby to save power"
+        _LOGGER.debug("No health data available for disk %s", disk_name)
 
     def _match_and_update_disk_health(
         self, cache_disk: dict[str, Any], all_disks: list[dict[str, Any]]
@@ -1538,7 +1285,7 @@ class UnraidApiClient:
             break  # Found a match, no need to continue
 
     async def _update_all_disk_health(self, array_data: dict[str, Any]) -> None:
-        """Update health information for all disks (data, parity, and cache) with spindown awareness."""
+        """Update health information for all disks (data, parity, and cache)."""
         try:
             # Collect all disk IDs from data and parity disks
             all_disk_ids = []
@@ -1559,16 +1306,15 @@ class UnraidApiClient:
                 _LOGGER.debug("No data or parity disks found to update")
                 return
 
-            # Update spindown configuration
-            self._update_spindown_config(array_data)
+            # Note: Spindown configuration update removed
 
-            # Get safe disk health information using intelligent spindown awareness
-            safe_disk_health = await self._get_safe_disk_health_info(all_disk_ids)
+            # Get disk health information for all disks
+            disk_health = await self._get_disk_health_info(all_disk_ids)
 
             # Update data disks with available health data
             for data_disk in array_data["array"]["disks"]:
                 disk_id = data_disk.get("id")
-                health_data = self._find_matching_health_data(data_disk, safe_disk_health)
+                health_data = self._find_matching_health_data(data_disk, disk_health)
 
                 if health_data:
                     self._update_disk_with_health_data(data_disk, health_data)
@@ -1578,19 +1324,19 @@ class UnraidApiClient:
             # Update parity disks with available health data
             for parity_disk in array_data["array"]["parities"]:
                 disk_id = parity_disk.get("id")
-                health_data = self._find_matching_health_data(parity_disk, safe_disk_health)
+                health_data = self._find_matching_health_data(parity_disk, disk_health)
 
                 if health_data:
                     self._update_disk_with_health_data(parity_disk, health_data)
                 else:
                     self._update_disk_with_cached_data(parity_disk, disk_id)
 
-            _LOGGER.debug("Updated health information for all disk types with spindown awareness")
+            _LOGGER.debug("Updated health information for all disk types")
 
         except UnraidApiError as err:
             _LOGGER.debug("API error getting all disk health: %s", err)
         except TimeoutError:
-            _LOGGER.debug("Timeout getting all disk health - this is normal if disks are in standby")
+            _LOGGER.debug("Timeout getting all disk health")
         except Exception as err:
             _LOGGER.debug("Error getting all disk health: %s", err)
 
@@ -1668,22 +1414,15 @@ class UnraidApiClient:
         # Get complete array info
         array_data = await self._get_complete_array_info(array_data)
 
-        # Only get detailed disk information if we're doing a detailed update
-        if not hasattr(self, "_skip_disk_details") or not self._skip_disk_details:
-            # Get detailed disk information (temperatures, etc.)
-            # This might wake sleeping disks, so we only do it when requested
-            _LOGGER.debug("Getting detailed disk information")
-            # Add detailed queries here if needed
-        else:
-            # Skip detailed queries to avoid waking disks
-            _LOGGER.debug("Skipping disk details query to avoid waking disks")
+        # Get detailed disk information for all disks
+        # Note: Spindown protection has been removed as the API does not provide reliable disk state information
+        _LOGGER.debug("Getting detailed disk information for all disks")
 
-            # Even when skipping detailed queries, we can safely get health data for cache disks
-            # since they're typically SSDs/NVMe and don't have spindown concerns
-            await self._update_cache_disk_temperatures(array_data)
+        # Update health data for cache disks
+        await self._update_cache_disk_temperatures(array_data)
 
-            # Also update health information for all disks (data and parity)
-            await self._update_all_disk_health(array_data)
+        # Update health information for all disks (data and parity)
+        await self._update_all_disk_health(array_data)
 
         return array_data
 
@@ -1963,7 +1702,7 @@ class UnraidApiClient:
             return []
 
     async def get_disks_info(self) -> dict[str, Any]:
-        """Get detailed information about all disks without waking sleeping disks."""
+        """Get detailed information about all disks."""
         # First get basic disk states without detailed queries
         basic_query = """
         query {
@@ -2070,7 +1809,7 @@ class UnraidApiClient:
         return temperatures
 
     async def _get_disk_temperatures(self) -> list[dict[str, Any]]:
-        """Get disk temperatures as sensors with spindown awareness."""
+        """Get disk temperatures as sensors."""
         sensors: list[dict[str, Any]] = []
 
         try:
@@ -3076,3 +2815,92 @@ class UnraidApiClient:
         except Exception as err:
             _LOGGER.error("Error validating API connection: %s", err)
             return False
+
+    # Optimized API methods for static/semi-static data
+    async def _get_static_disk_info(self) -> dict[str, Any]:
+        """Get only static disk hardware information to reduce API load."""
+        try:
+            # Query only static hardware fields to minimize data transfer
+            static_disk_query = """
+            query GetStaticDiskInfo {
+                disks {
+                    id
+                    device
+                    name
+                    vendor
+                    size
+                    serialNum
+                    firmwareRevision
+                    interfaceType
+                    type
+                }
+            }
+            """
+
+            response = await self._execute_graphql_query(static_disk_query)
+            return response.get("data", {})
+
+        except Exception as err:
+            _LOGGER.debug("Error getting static disk info: %s", err)
+            return {}
+
+    async def _get_static_system_info(self) -> dict[str, Any]:
+        """Get only static system hardware information to reduce API load."""
+        try:
+            # Query only static hardware fields
+            static_system_query = """
+            query GetStaticSystemInfo {
+                info {
+                    cpu {
+                        manufacturer
+                        brand
+                        cores
+                        threads
+                        speedmax
+                    }
+                    os {
+                        platform
+                        distro
+                        release
+                        kernel
+                    }
+                }
+            }
+            """
+
+            response = await self._execute_graphql_query(static_system_query)
+            return response.get("data", {})
+
+        except Exception as err:
+            _LOGGER.debug("Error getting static system info: %s", err)
+            return {}
+
+    async def _get_container_config(self) -> dict[str, Any]:
+        """Get only semi-static container configuration to reduce API load."""
+        try:
+            # Query only configuration fields that change infrequently
+            container_config_query = """
+            query GetContainerConfig {
+                docker {
+                    containers {
+                        id
+                        names
+                        image
+                        autoStart
+                        ports {
+                            ip
+                            privatePort
+                            publicPort
+                            type
+                        }
+                    }
+                }
+            }
+            """
+
+            response = await self._execute_graphql_query(container_config_query)
+            return response.get("data", {})
+
+        except Exception as err:
+            _LOGGER.debug("Error getting container config: %s", err)
+            return {}

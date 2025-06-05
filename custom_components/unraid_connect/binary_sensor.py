@@ -448,15 +448,15 @@ class UnraidDiskHealthBinarySensor(UnraidDiskEntity, BinarySensorEntity):
         # Add disk usage information if available
         self._add_disk_usage_attributes(attributes, disk, disk_state)
 
-        # Add spindown awareness information
-        self._add_spindown_awareness_attributes(attributes, disk)
+        # Add SMART health information
+        self._add_smart_health_attributes(attributes, disk)
 
         return attributes
 
-    def _add_spindown_awareness_attributes(
+    def _add_smart_health_attributes(
         self, attributes: dict[str, Any], disk: dict[str, Any]
     ) -> None:
-        """Add spindown awareness attributes to provide user information."""
+        """Add SMART health attributes to provide user information."""
         # Add SMART status only
         smart_status = disk.get("smartStatus")
         if smart_status:
@@ -465,7 +465,7 @@ class UnraidDiskHealthBinarySensor(UnraidDiskEntity, BinarySensorEntity):
     def _add_temperature_attributes(
         self, attributes: dict[str, Any], disk: dict[str, Any], disk_state: str
     ) -> None:
-        """Add temperature attributes to the disk with spindown awareness."""
+        """Add temperature attributes to the disk."""
         # Skip temperature for bootdisk (sda) as it can't provide SMART reports
         if disk.get("device") == "sda" and disk.get("name", "").lower() == "bootdisk":
             attributes["Temperature"] = "Not Available (Boot Disk)"

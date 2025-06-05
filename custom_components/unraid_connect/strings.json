@@ -176,5 +176,19 @@
         }
       }
     }
+  },
+  "issues": {
+    "api_connection_failed": {
+      "title": "Unraid Connect API Connection Failed",
+      "description": "The connection to your Unraid server has failed. Error: {error}. This may be due to network issues, incorrect API key, or server problems. Click 'Fix' to test the connection and attempt to resolve the issue."
+    },
+    "sensors_unavailable": {
+      "title": "Unraid Connect Sensors Unavailable",
+      "description": "{count} sensors have become unavailable. This may be due to temporary network issues or cache problems. Click 'Fix' to refresh the data and restore sensor availability."
+    },
+    "cache_corruption": {
+      "title": "Unraid Connect Cache Corruption",
+      "description": "The integration's data cache may be corrupted, causing inconsistent behavior. Click 'Fix' to clear the cache and refresh all data from your Unraid server."
+    }
   }
 }

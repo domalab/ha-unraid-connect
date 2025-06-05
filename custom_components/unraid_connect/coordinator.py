@@ -15,7 +15,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import UnraidApiClient, UnraidApiError
-from .const import SPINDOWN_DEFAULT_MINUTES
+# Note: SPINDOWN_DEFAULT_MINUTES import removed as spindown protection has been disabled
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,21 +32,26 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Initialize the coordinator with enhanced memory management."""
         self.api = api
         self.name = name
-        self._detail_update_counter = 0
-        self._detail_update_frequency = 24  # Conservative default
-        self._spindown_delay = 0
-        self._respect_spindown = True
+        # Note: Spindown-related variables removed as spindown protection has been disabled
 
-        # Memory optimization: Data caching with TTL
+        # Memory optimization: Tiered data caching with optimized TTL values
         self._data_cache: dict[str, dict[str, Any]] = {}
         self._cache_timestamps: dict[str, datetime] = {}
         self._cache_ttl: dict[str, int] = {
-            "system_info": 300,      # 5 minutes - rarely changes
-            "docker_containers": 60,  # 1 minute - can change frequently
-            "vms": 60,               # 1 minute - can change frequently
-            "notifications": 120,     # 2 minutes - moderate frequency
-            "shares": 1800,          # 30 minutes - rarely changes
-            "array_status": 30,      # 30 seconds - most dynamic
+            # Real-time data (critical monitoring)
+            "array_status": 30,           # 30 seconds - disk temps, SMART, usage
+            "docker_containers": 60,      # 1 minute - container states
+            "vms": 60,                   # 1 minute - VM states
+            "notifications": 120,         # 2 minutes - alerts
+
+            # Medium frequency data (operational)
+            "system_info": 600,          # 10 minutes - system resources
+            "shares": 900,               # 15 minutes - share usage
+
+            # Static/semi-static data (hardware info)
+            "disk_hardware": 86400,      # 24 hours - disk serial, firmware, etc.
+            "system_hardware": 86400,    # 24 hours - CPU model, cores, etc.
+            "container_config": 900,     # 15 minutes - images, ports, etc.
         }
 
         # Network efficiency: Batch API calls
@@ -56,8 +61,10 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Query preference caching (from enhanced API)
         self._successful_queries: dict[str, str] = {}
 
-        # Add a flag to control disk details querying
-        self.api._skip_disk_details = False
+        # Note: _skip_disk_details flag removed as spindown protection has been disabled
+
+        # Track startup time for safer static cache implementation
+        self._startup_time = datetime.now()
 
         super().__init__(
             hass,
@@ -120,10 +127,12 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         "vms": {},
                         "shares": {},
                         "notifications": {},
+                        "disk_hardware": {},      # Static disk hardware info
+                        "system_hardware": {},    # Static system hardware info
+                        "container_config": {},   # Semi-static container config
                     }
 
-                # Increment the detail update counter
-                self._detail_update_counter += 1
+                # Note: Detail update counter removed as spindown protection has been disabled
 
                 # Use concurrent fetching for independent data sources
                 fetch_tasks = []
@@ -131,10 +140,16 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # Always fetch array status (most critical and dynamic)
                 fetch_tasks.append(self._fetch_array_status_cached())
 
-                # Fetch other data based on cache validity
+                # Fetch other data based on cache validity and frequency tiers
+
+                # Medium frequency data (5-15 minutes)
                 if not self._is_cache_valid("system_info"):
                     fetch_tasks.append(self._fetch_system_info_cached())
 
+                if not self._is_cache_valid("shares"):
+                    fetch_tasks.append(self._fetch_shares_cached())
+
+                # Real-time data (30s-2min)
                 if not self._is_cache_valid("docker_containers"):
                     fetch_tasks.append(self._fetch_docker_containers_cached())
 
@@ -144,21 +159,38 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if not self._is_cache_valid("notifications"):
                     fetch_tasks.append(self._fetch_notifications_cached())
 
-                # For shares, only query if it's time for a detailed update or cache is invalid
-                if (self._detail_update_counter >= self._detail_update_frequency or
-                    not self._is_cache_valid("shares")):
-                    fetch_tasks.append(self._fetch_shares_cached())
-                    # Reset counter if we did a detailed update
-                    if self._detail_update_counter >= self._detail_update_frequency:
-                        self._detail_update_counter = 0
+                # Static/semi-static data (15min-24hr) - re-enabled with safer implementation
+                # Only fetch static data if integration has been running for more than 5 minutes
+                # This prevents issues during startup and ensures core functionality is stable
+                if (hasattr(self, '_startup_time') and
+                    (datetime.now() - self._startup_time).total_seconds() > 300):
+
+                    if not self._is_cache_valid("disk_hardware"):
+                        try:
+                            fetch_tasks.append(self._fetch_disk_hardware_cached())
+                        except Exception as err:
+                            _LOGGER.debug("Skipping disk hardware cache due to error: %s", err)
+
+                    if not self._is_cache_valid("system_hardware"):
+                        try:
+                            fetch_tasks.append(self._fetch_system_hardware_cached())
+                        except Exception as err:
+                            _LOGGER.debug("Skipping system hardware cache due to error: %s", err)
+
+                    if not self._is_cache_valid("container_config"):
+                        try:
+                            fetch_tasks.append(self._fetch_container_config_cached())
+                        except Exception as err:
+                            _LOGGER.debug("Skipping container config cache due to error: %s", err)
 
                 # Execute all fetch tasks concurrently
                 if fetch_tasks:
                     await asyncio.gather(*fetch_tasks, return_exceptions=True)
 
-                # Update data from cache
+                # Update data from cache (all cache categories)
                 for data_type in ["system_info", "array_status", "docker_containers",
-                                "vms", "shares", "notifications"]:
+                                "vms", "shares", "notifications", "disk_hardware",
+                                "system_hardware", "container_config"]:
                     cached_data = self._get_cached_data(data_type)
                     if cached_data is not None:
                         self.data[data_type] = cached_data
@@ -247,25 +279,14 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.error("Error fetching shares: %s", err)
 
     async def _fetch_array_status_cached(self) -> None:
-        """Fetch array status with caching and special disk handling."""
+        """Fetch array status with caching."""
         try:
-            # Set disk detail querying flag
-            should_query_disk_details = (
-                self._detail_update_counter >= self._detail_update_frequency
-            )
-            self.api._skip_disk_details = not should_query_disk_details
-
-            if should_query_disk_details:
-                _LOGGER.debug("Performing detailed disk query (cycle %s of %s)",
-                            self._detail_update_counter, self._detail_update_frequency)
-            else:
-                _LOGGER.debug("Skipping detailed disk query to avoid waking disks (cycle %s of %s)",
-                            self._detail_update_counter, self._detail_update_frequency)
+            # Note: Disk detail querying logic simplified as spindown protection has been removed
+            _LOGGER.debug("Fetching array status with full disk details")
 
             array_status = await self._batch_api_call("array_status", self.api.get_array_status)
 
-            # Process spindown configuration
-            self._process_spindown_config(array_status)
+            # Note: Spindown configuration processing removed
 
             # Process and cache array status data
             self._process_array_status_data(array_status)
@@ -323,31 +344,14 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.error("Error fetching notifications: %s", err)
 
     async def _fetch_array_status(self) -> None:
-        """Fetch array status with special handling for disk data."""
+        """Fetch array status with full disk data."""
         try:
-            # Set a flag on the API client to control whether to query disk details
-            should_query_disk_details = (
-                self._detail_update_counter >= self._detail_update_frequency
-            )
-            self.api._skip_disk_details = not should_query_disk_details
-
-            if should_query_disk_details:
-                _LOGGER.debug(
-                    "Performing detailed disk query (cycle %s of %s)",
-                    self._detail_update_counter,
-                    self._detail_update_frequency,
-                )
-            else:
-                _LOGGER.debug(
-                    "Skipping detailed disk query to avoid waking disks (cycle %s of %s)",
-                    self._detail_update_counter,
-                    self._detail_update_frequency,
-                )
+            # Note: Disk detail querying logic simplified as spindown protection has been removed
+            _LOGGER.debug("Fetching array status with full disk details")
 
             array_status = await self.api.get_array_status()
 
-            # Process spindown configuration
-            self._process_spindown_config(array_status)
+            # Note: Spindown configuration processing removed
 
             # Process array status data
             self._process_array_status_data(array_status)
@@ -355,83 +359,8 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception as err:
             _LOGGER.error("Error fetching array status: %s", err)
 
-    def _process_spindown_config(self, array_status: dict[str, Any]) -> None:
-        """Process spindown configuration from array status."""
-        if "spindown_config" not in array_status:
-            return
-
-        spindown_config = array_status.get("spindown_config", {})
-        spindown_delay_str = spindown_config.get("delay", "0")
-
-        try:
-            # Convert spindown delay to minutes based on Unraid's ACTUAL settings
-            # According to Unraid documentation and web interface:
-            # "0" = 30 minutes (default)
-            # "15" = 15 minutes
-            # "30" = 30 minutes
-            # "45" = 45 minutes
-            # "1" through "9" = hours
-            # "-1" or "never" = Never spin down
-
-            spindown_delay_value = int(spindown_delay_str)
-
-            if spindown_delay_value == 0:
-                # Default/unconfigured Unraid setting
-                # In Unraid, delay=0 means "use default" which is typically 30 minutes
-                # but could vary based on Unraid version or user's previous configuration
-                spindown_delay = SPINDOWN_DEFAULT_MINUTES
-                _LOGGER.debug("Spindown set to default/unconfigured (using %d minutes)", spindown_delay)
-            elif spindown_delay_value == -1:
-                # Never spin down - set a very high value
-                spindown_delay = 24 * 60 * 7  # 1 week in minutes
-                _LOGGER.debug("Spindown set to NEVER")
-            elif 1 <= spindown_delay_value <= 45:
-                # Values 1-45: check if it's minutes or hours
-                if spindown_delay_value in [15, 30, 45]:
-                    # These are minute values
-                    spindown_delay = spindown_delay_value
-                    _LOGGER.debug("Spindown set to %s minutes", spindown_delay)
-                else:
-                    # Values 1-9 (excluding 15,30,45) are hours
-                    spindown_delay = spindown_delay_value * 60
-                    _LOGGER.debug(
-                        "Spindown set to %s hours (%s minutes)",
-                        spindown_delay_value,
-                        spindown_delay,
-                    )
-            else:
-                # Fallback for unexpected values
-                spindown_delay = 30  # Default to 30 minutes
-                _LOGGER.warning("Unexpected spindown delay value %s, defaulting to 30 minutes", spindown_delay_value)
-
-            self._spindown_delay = spindown_delay
-            self._adjust_detail_update_frequency(spindown_delay)
-
-        except (ValueError, TypeError):
-            _LOGGER.warning("Invalid spindown delay value: %s, defaulting to 30 minutes", spindown_delay_str)
-            self._spindown_delay = 30
-            self._adjust_detail_update_frequency(30)
-
-    def _adjust_detail_update_frequency(self, spindown_delay: int) -> None:
-        """Adjust detail update frequency based on spindown delay."""
-        if spindown_delay <= 0 or self.update_interval is None:
-            return
-
-        update_interval_minutes = self.update_interval.total_seconds() / 60
-        if update_interval_minutes <= 0:
-            return
-
-        # Add a buffer of 2x the spindown delay to be safe
-        # But ensure we have at least 24 cycles (default)
-        self._detail_update_frequency = max(
-            24,  # Minimum of 24 cycles
-            int((spindown_delay * 2) / update_interval_minutes),
-        )
-        _LOGGER.debug(
-            "Adjusted detail update frequency to %s cycles based on spindown delay of %s minutes",
-            self._detail_update_frequency,
-            spindown_delay,
-        )
+    # Note: Spindown configuration processing methods removed as the Unraid Connect GraphQL API
+    # does not provide reliable disk power state information for spindown protection.
 
     def _process_array_status_data(self, array_status: dict[str, Any]) -> None:
         """Process array status data with special handling for disk data."""
@@ -444,11 +373,7 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if "array" in array_status:
             self._update_array_data(array_status)
 
-        # Update spindown configuration
-        if "spindown_config" in array_status:
-            self.data["array_status"]["spindown_config"] = array_status[
-                "spindown_config"
-            ]
+        # Note: Spindown configuration update removed
 
         # Update flash drive data
         if "flash" in array_status:
@@ -547,17 +472,35 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # For other state transitions, use the new disk data
             merged_disks.append(new_disk)
 
-    async def _fetch_detailed_data(self) -> None:
-        """Fetch detailed data that should only be queried occasionally."""
-        _LOGGER.debug(
-            "Performing detailed update (cycle %s of %s)",
-            self._detail_update_counter,
-            self._detail_update_frequency,
-        )
+    # Note: _fetch_detailed_data method removed as cycle-based querying has been disabled
 
-        # Shares information - but only once every N cycles based on spindown delay
+    # New optimized cache fetch methods for static/semi-static data
+    async def _fetch_disk_hardware_cached(self) -> None:
+        """Fetch static disk hardware information with long-term caching."""
         try:
-            shares = await self.api.get_shares()
-            self.data["shares"] = shares
+            # Get only static hardware attributes from disk health query
+            disk_hardware = await self._batch_api_call("disk_hardware", self.api._get_static_disk_info)
+            self._cache_data("disk_hardware", disk_hardware)
+            _LOGGER.debug("Fetched and cached static disk hardware info")
         except Exception as err:
-            _LOGGER.error("Error fetching shares: %s", err)
+            _LOGGER.debug("Error fetching disk hardware info: %s", err)
+
+    async def _fetch_system_hardware_cached(self) -> None:
+        """Fetch static system hardware information with long-term caching."""
+        try:
+            # Get only static hardware attributes from system info query
+            system_hardware = await self._batch_api_call("system_hardware", self.api._get_static_system_info)
+            self._cache_data("system_hardware", system_hardware)
+            _LOGGER.debug("Fetched and cached static system hardware info")
+        except Exception as err:
+            _LOGGER.debug("Error fetching system hardware info: %s", err)
+
+    async def _fetch_container_config_cached(self) -> None:
+        """Fetch semi-static container configuration with medium-term caching."""
+        try:
+            # Get only configuration attributes from container query
+            container_config = await self._batch_api_call("container_config", self.api._get_container_config)
+            self._cache_data("container_config", container_config)
+            _LOGGER.debug("Fetched and cached container configuration info")
+        except Exception as err:
+            _LOGGER.debug("Error fetching container config: %s", err)
