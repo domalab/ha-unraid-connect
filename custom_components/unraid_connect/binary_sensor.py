@@ -145,7 +145,7 @@ async def async_setup_entry(
 class UnraidOnlineBinarySensor(UnraidSystemEntity, BinarySensorEntity):
     """Binary sensor for Unraid online status."""
 
-    _attr_name = "Online"
+    _attr_name = "Server Online"
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
@@ -169,7 +169,7 @@ class UnraidOnlineBinarySensor(UnraidSystemEntity, BinarySensorEntity):
 class UnraidArrayRunningBinarySensor(UnraidArrayEntity, BinarySensorEntity):
     """Binary sensor for Unraid array running status."""
 
-    _attr_name = "Array"
+    _attr_name = "Array Running"
     _attr_icon = ICON_ARRAY
     _attr_device_class = BinarySensorDeviceClass.RUNNING
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -234,8 +234,9 @@ class UnraidDiskHealthBinarySensor(UnraidDiskEntity, BinarySensorEntity):
         super().__init__(coordinator, server_name, "health", disk_id, disk_type)
 
         self._disk_name = disk_name
-        # Set the display name to just the disk name and Health
-        self._attr_name = f"{disk_name} Health"
+        # Set the display name with proper formatting
+        formatted_disk_name = self._format_disk_name_for_display(disk_name)
+        self._attr_name = f"{formatted_disk_name} Health"
 
         # Override the unique_id to ensure it follows the desired pattern
         self._attr_unique_id = f"{coordinator.api.host}_disk_{disk_id}_health"
@@ -253,6 +254,80 @@ class UnraidDiskHealthBinarySensor(UnraidDiskEntity, BinarySensorEntity):
             self._attr_unique_id,
             self._attr_name,
         )
+
+    def _format_disk_name_for_display(self, disk_name: str) -> str:
+        """Format disk name for user-friendly display."""
+        # Handle numbered disks (disk1, disk2, etc.)
+        if disk_name.startswith("disk") and disk_name[4:].isdigit():
+            disk_number = disk_name[4:]
+            return f"Disk {disk_number}"
+
+        # Handle special disk names with proper capitalization
+        if disk_name.lower() == "cache":
+            return "Cache"
+        elif disk_name.lower() == "parity":
+            return "Parity"
+        elif disk_name.lower() == "garbage":
+            return "Garbage"
+        else:
+            # For other names, capitalize first letter
+            return disk_name.capitalize()
+
+    def _format_size(self, size_bytes: float) -> str:
+        """Format size in bytes to human readable format."""
+        if size_bytes == 0:
+            return "0 B"
+
+        units = ["B", "KB", "MB", "GB", "TB", "PB"]
+        unit_index = 0
+        size = float(size_bytes)
+
+        while size >= 1024 and unit_index < len(units) - 1:
+            size /= 1024
+            unit_index += 1
+
+        if unit_index == 0:
+            return f"{int(size)} {units[unit_index]}"
+        else:
+            return f"{size:.2f} {units[unit_index]}"
+
+    def _translate_disk_status(self, status: str | None) -> str:
+        """Translate technical disk status codes to user-friendly descriptions."""
+        if not status:
+            return "Unknown"
+
+        status_translations = {
+            "DISK_OK": "Healthy",
+            "DISK_DSBL": "Disabled",
+            "DISK_NP": "Not Present",
+            "DISK_NP_DSBL": "Not Present (Disabled)",
+            "DISK_INVALID": "Invalid",
+            "DISK_WRONG": "Wrong Disk",
+            "DISK_NEW": "New Disk",
+            "DISK_EMULATED": "Emulated",
+            "DISK_MISSING": "Missing",
+            "DISK_ERROR": "Error",
+            "DISK_UNKNOWN": "Unknown Status",
+        }
+
+        return status_translations.get(status, status)
+
+    def _translate_disk_state(self, state: str | None) -> str:
+        """Translate technical disk state codes to user-friendly descriptions."""
+        if not state:
+            return "Unknown"
+
+        state_translations = {
+            "ACTIVE": "Active",
+            "STANDBY": "Standby (Power Saving)",
+            "SPUN_DOWN": "Spun Down",
+            "SPINNING_UP": "Spinning Up",
+            "SPINNING_DOWN": "Spinning Down",
+            "IDLE": "Idle",
+            "OFFLINE": "Offline",
+        }
+
+        return state_translations.get(state.upper(), state)
 
     @property
     def is_on(self) -> bool:
@@ -336,27 +411,36 @@ class UnraidDiskHealthBinarySensor(UnraidDiskEntity, BinarySensorEntity):
     def _get_disk_attributes(
         self, disk: dict[str, Any], disk_state: str
     ) -> dict[str, Any]:
-        """Get disk attributes."""
+        """Get disk attributes with user-friendly formatting."""
         attributes = {
-            ATTR_DISK_NAME: disk.get("name"),
-            ATTR_DISK_TYPE: self._disk_type,
-            "status": disk.get("status"),
-            "state": disk_state,
+            "Disk Name": disk.get("name"),
+            "Disk Type": self._disk_type,
+            "Health Status": self._translate_disk_status(disk.get("status")),
+            "Power State": self._translate_disk_state(disk_state),
         }
+
+        # Add device path if available
+        if disk.get("device"):
+            attributes["Device Path"] = f"/dev/{disk.get('device')}"
 
         # Add serial number if available
         if disk.get("serial"):
-            attributes[ATTR_DISK_SERIAL] = disk.get("serial")
+            attributes["Serial Number"] = disk.get("serial")
 
         # Add size if available and not in standby
         if disk.get("size") and disk_state != "STANDBY":
-            attributes[ATTR_DISK_SIZE] = disk.get("size")
+            try:
+                size_value = disk.get("size")
+                if size_value is not None:
+                    size_bytes = float(size_value)
+                    attributes["Disk Capacity"] = self._format_size(size_bytes)
+            except (ValueError, TypeError):
+                attributes["Disk Capacity"] = str(disk.get("size"))
 
         # Add rotational status if available
         if "rotational" in disk:
-            attributes["rotational"] = disk.get("rotational", True)
-            disk_type = "HDD" if disk.get("rotational", True) else "SSD/NVMe"
-            attributes["disk_technology"] = disk_type
+            is_rotational = disk.get("rotational", True)
+            attributes["Drive Type"] = "Hard Disk Drive (HDD)" if is_rotational else "Solid State Drive (SSD/NVMe)"
 
         # Add temperature if available and not in standby
         self._add_temperature_attributes(attributes, disk, disk_state)
@@ -373,32 +457,10 @@ class UnraidDiskHealthBinarySensor(UnraidDiskEntity, BinarySensorEntity):
         self, attributes: dict[str, Any], disk: dict[str, Any]
     ) -> None:
         """Add spindown awareness attributes to provide user information."""
-        # Add health data source information
-        health_data_source = disk.get("health_data_source")
-        if health_data_source:
-            attributes["health_data_source"] = health_data_source
-
-            if health_data_source == "live":
-                attributes["health_status"] = "Active - real-time monitoring"
-            elif health_data_source == "cached":
-                attributes["health_status"] = "Standby - using last known values"
-                health_note = disk.get("health_note")
-                if health_note:
-                    attributes["health_note"] = health_note
-
-        # Add disk state note if available
-        disk_state_note = disk.get("disk_state_note")
-        if disk_state_note:
-            attributes["disk_state_note"] = disk_state_note
-
-        # Add SMART status with source information
+        # Add SMART status only
         smart_status = disk.get("smartStatus")
         if smart_status:
-            attributes["smart_status"] = smart_status
-            if health_data_source == "cached":
-                attributes["smart_status_note"] = "Last known SMART status"
-            elif health_data_source == "live":
-                attributes["smart_status_note"] = "Current SMART status"
+            attributes["SMART Health"] = "Passed" if smart_status == "OK" else "Failed"
 
     def _add_temperature_attributes(
         self, attributes: dict[str, Any], disk: dict[str, Any], disk_state: str
@@ -406,10 +468,7 @@ class UnraidDiskHealthBinarySensor(UnraidDiskEntity, BinarySensorEntity):
         """Add temperature attributes to the disk with spindown awareness."""
         # Skip temperature for bootdisk (sda) as it can't provide SMART reports
         if disk.get("device") == "sda" and disk.get("name", "").lower() == "bootdisk":
-            attributes["temperature_available"] = False
-            attributes["temperature_note"] = (
-                "Bootdisk (sda) cannot provide SMART temperature data"
-            )
+            attributes["Temperature"] = "Not Available (Boot Disk)"
             return
 
         # Check if we have health data source information
@@ -421,34 +480,21 @@ class UnraidDiskHealthBinarySensor(UnraidDiskEntity, BinarySensorEntity):
             if temp is not None:
                 try:
                     temp_value = float(temp)
-                    attributes[ATTR_DISK_TEMP] = temp_value
-                    attributes["temperature"] = temp_value
-                    attributes["unit_of_measurement"] = "°C"
-                    attributes["temperature_source"] = "cached (disk may be in standby)"
-                    attributes["disk_state_note"] = disk.get("disk_state_note", "Disk may be in standby")
+                    attributes["Temperature"] = f"{temp_value}°C"
                     self._last_known_temp = temp_value
                 except (ValueError, TypeError):
-                    attributes["temperature_available"] = False
-                    attributes["temperature_note"] = f"Invalid cached temperature value: {temp}"
+                    attributes["Temperature"] = "Not Available"
             else:
-                attributes["temperature_available"] = False
-                attributes["temperature_note"] = "Disk may be in standby, no cached temperature available"
-                attributes["disk_state_note"] = disk.get("disk_state_note", "Disk may be in standby")
+                attributes["Temperature"] = "Not Available (Disk in Standby)"
             return
 
         # For disks in standby (legacy detection), we don't want to wake them just to get temperature
         if disk_state == "STANDBY":
             # If we have a last known temperature, use it
             if hasattr(self, "_last_known_temp") and self._last_known_temp is not None:
-                attributes[ATTR_DISK_TEMP] = self._last_known_temp
-                attributes["temperature"] = self._last_known_temp
-                attributes["unit_of_measurement"] = "°C"
-                attributes["temperature_source"] = "cached (disk in standby)"
+                attributes["Temperature"] = f"{self._last_known_temp}°C"
             else:
-                attributes["temperature_available"] = False
-                attributes["temperature_note"] = (
-                    "Disk in standby, no cached temperature available"
-                )
+                attributes["Temperature"] = "Not Available (Disk in Standby)"
             return
 
         # For active disks, try to get the temperature
@@ -476,27 +522,18 @@ class UnraidDiskHealthBinarySensor(UnraidDiskEntity, BinarySensorEntity):
         if temp is not None:
             try:
                 temp_value = float(temp)
-                attributes[ATTR_DISK_TEMP] = temp_value
-                attributes["temperature"] = temp_value
-                attributes["unit_of_measurement"] = "°C"
-                attributes["temperature_source"] = temp_source
-
+                attributes["Temperature"] = f"{temp_value}°C"
                 # Store the temperature for future use
                 self._last_known_temp = temp_value
             except (ValueError, TypeError):
-                attributes["temperature_available"] = False
-                attributes["temperature_note"] = f"Invalid temperature value: {temp}"
+                attributes["Temperature"] = "Not Available"
         # For SSDs/NVMe with no temperature, provide a default
         elif not disk.get("rotational", True):
             temp_value = 35.0  # Default temperature for SSDs
-            attributes[ATTR_DISK_TEMP] = temp_value
-            attributes["temperature"] = temp_value
-            attributes["unit_of_measurement"] = "°C"
-            attributes["temperature_source"] = "default for SSD/NVMe"
+            attributes["Temperature"] = f"{temp_value}°C"
             self._last_known_temp = temp_value
         else:
-            attributes["temperature_available"] = False
-            attributes["temperature_note"] = "No temperature data available"
+            attributes["Temperature"] = "Not Available"
 
     def _add_disk_usage_attributes(
         self, attributes: dict[str, Any], disk: dict[str, Any], disk_state: str
@@ -508,7 +545,7 @@ class UnraidDiskHealthBinarySensor(UnraidDiskEntity, BinarySensorEntity):
 
         # Add filesystem type if available
         if disk.get("fsType"):
-            attributes["filesystem_type"] = disk.get("fsType")
+            attributes["File System Type"] = disk.get("fsType")
 
         # Special handling for ZFS disks
         if disk.get("fsType", "").lower() == "zfs":
@@ -532,17 +569,12 @@ class UnraidDiskHealthBinarySensor(UnraidDiskEntity, BinarySensorEntity):
                 if fs_size > 0:
                     # Add usage percentage
                     usage_percent = round((fs_used / fs_size) * 100, 1)
-                    attributes["usage_percent"] = usage_percent
+                    attributes["Usage"] = f"{usage_percent}%"
 
-                    # Add formatted values
-                    attributes["fs_size"] = self._format_size(fs_size)
-                    attributes["fs_used"] = self._format_size(fs_used)
-                    attributes["fs_free"] = self._format_size(fs_free)
-
-                    # Add raw values in KB
-                    attributes["fs_size_kb"] = int(fs_size)
-                    attributes["fs_used_kb"] = int(fs_used)
-                    attributes["fs_free_kb"] = int(fs_free)
+                    # Add formatted values only
+                    attributes["Capacity"] = self._format_size(fs_size)
+                    attributes["Used Space"] = self._format_size(fs_used)
+                    attributes["Free Space"] = self._format_size(fs_free)
             except (ValueError, TypeError):
                 pass
         else:
@@ -719,8 +751,8 @@ class UnraidDockerContainerRunningBinarySensor(UnraidDockerEntity, BinarySensorE
         # Use "docker" as entity key instead of "running" to avoid "running" in the entity ID
         super().__init__(coordinator, server_name, "docker", container_id)
         self._container_name = container_name
-        # Remove "Running" from the display name
-        self._attr_name = f"{container_name}"
+        # Use container name without redundant "Running"
+        self._attr_name = f"Container {container_name}"
 
     @property
     def is_on(self) -> bool:
@@ -778,8 +810,8 @@ class UnraidVMRunningBinarySensor(UnraidVMEntity, BinarySensorEntity):
         # Use "vm" as entity key instead of "running" to avoid "running" in the entity ID
         super().__init__(coordinator, server_name, "vm", vm_id)
         self._vm_name = vm_name
-        # Remove "Running" from the display name
-        self._attr_name = f"{vm_name}"
+        # Use VM name without redundant "Running"
+        self._attr_name = f"VM {vm_name}"
 
     @property
     def is_on(self) -> bool:

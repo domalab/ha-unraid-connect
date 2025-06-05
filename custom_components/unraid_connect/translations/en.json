@@ -36,7 +36,7 @@
                     "scan_interval": "How often to update data from Unraid",
                     "verify_ssl": "Whether to verify the SSL certificate"
                 },
-                "description": "Set up Unraid Connect integration. You need the Unraid Connect plugin and an API key.\n\nIMPORTANT: Add your Home Assistant URL (including port) to Unraid Connect's 'API extra origins':\nhttp://YOUR_HA_IP:8123\n\nDon't forget to click APPLY after adding it!",
+                "description": "Set up Unraid Connect integration. You need the Unraid Connect plugin and an API key.",
                 "title": "Unraid Connect Integration"
             }
         }

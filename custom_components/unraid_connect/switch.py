@@ -83,28 +83,9 @@ async def async_setup_entry(
 
     _LOGGER.debug("Found %d VMs for creating switches", len(vm_data))
 
-    # If we have no VMs from the API but the user has indicated they have VMs,
-    # we'll try to create a switch for them anyway
+    # If we have no VMs from the API, log this for debugging
     if not vm_data:
-        # Check if we can get VM info from the client directly
-        try:
-            # Try to get VM info from the Unraid server directly
-            # This is a fallback for when the API doesn't report VMs correctly
-            _LOGGER.debug("No VMs found via API, checking for VMs directly")
-
-            # If you know the VM UUID and name, you can create a switch for it
-            # even if the API doesn't report it
-            known_vms = [
-                # Add known VMs here - these will be created even if the API doesn't report them
-                # Format: {"uuid": "vm-uuid", "name": "vm-name", "state": "RUNNING"}
-                # You can add more VMs as needed
-                {"uuid": "vm-1", "name": "Bastion", "state": "RUNNING"}
-            ]
-
-            # Add the known VMs to the VM data
-            vm_data.extend(known_vms)
-        except Exception as err:
-            _LOGGER.debug("Error getting VMs directly: %s", err)
+        _LOGGER.debug("No VMs found via API - VM service may not be available or no VMs configured")
 
     vm_entities: list[SwitchEntity] = []
     for vm in vm_data:
@@ -137,7 +118,7 @@ class UnraidDockerContainerSwitch(UnraidDockerEntity, SwitchEntity):
         super().__init__(coordinator, server_name, "switch", container_id)
         self.client = client
         self._container_name = container_name
-        self._attr_name = f"Docker {container_name}"
+        self._attr_name = f"Container {container_name}"
 
     @property
     def is_on(self) -> bool:

@@ -65,8 +65,8 @@ async def async_setup_entry(
 
     # Add system sensors
     system_entities.append(UnraidSystemStateSensor(coordinator, name))
-    # Add CPU usage sensor
-    entities.append(UnraidCpuUsageSensor(coordinator, name))
+    # CPU usage sensor disabled - Unraid GraphQL API doesn't provide real-time CPU usage data
+    # entities.append(UnraidCpuUsageSensor(coordinator, name))
 
     # Add other system sensors to entities directly if data is available
     cpu_temp = (
@@ -86,7 +86,8 @@ async def async_setup_entry(
         "hardware", {}
     ):
         entities.append(UnraidMotherboardTempSensor(coordinator, name))
-    entities.append(UnraidMemoryUsageSensor(coordinator, name))
+    # Memory usage sensor disabled - Unraid GraphQL API doesn't provide real-time memory usage data
+    # entities.append(UnraidMemoryUsageSensor(coordinator, name))
     entities.append(UnraidUptimeSensor(coordinator, name))
     entities.append(UnraidNotificationSensor(coordinator, name))
 
@@ -189,7 +190,7 @@ async def async_setup_entry(
 class UnraidSystemStateSensor(UnraidSystemEntity, SensorEntity):
     """Sensor for Unraid system state."""
 
-    _attr_name = "System State"
+    _attr_name = "Server Status"
     _attr_icon = ICON_CPU
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
@@ -347,11 +348,11 @@ class UnraidCpuUsageSensor(UnraidSystemEntity, SensorEntity):
                         pass
 
             # If we get here, we couldn't find CPU usage data
-            # Return a default value of 0 instead of None to avoid "Unknown" state
-            _LOGGER.warning("No CPU usage data found, using default value of 0")
+            # This is a known limitation of the Unraid GraphQL API
+            _LOGGER.debug("CPU usage data not available in Unraid GraphQL API - this is a known limitation")
             return 0
         except (KeyError, AttributeError, TypeError):
-            _LOGGER.warning("Error getting CPU usage, using default value of 0")
+            _LOGGER.debug("Error getting CPU usage data - using default value of 0")
             return 0
 
     @property
@@ -400,7 +401,11 @@ class UnraidCpuUsageSensor(UnraidSystemEntity, SensorEntity):
             versions = info.get("versions", {})
             if versions:
                 attributes["unraid_version"] = versions.get("unraid", "Unknown")
-                return attributes
+
+            # Add API limitation note for CPU usage
+            attributes["api_limitation"] = "Real-time CPU usage not available in Unraid GraphQL API"
+            attributes["data_source"] = "Static hardware information only"
+
             return attributes
         except (KeyError, AttributeError, TypeError):
             return {}
@@ -863,10 +868,10 @@ class UnraidMemoryUsageSensor(UnraidSystemEntity, SensorEntity):
                 return 0
 
             # Default to 0 if we can't calculate
-            _LOGGER.debug("No memory usage data found, using default value of 0")
+            _LOGGER.debug("Memory usage data not available in Unraid GraphQL API - this is a known limitation")
             return 0
         except (KeyError, AttributeError, TypeError, ZeroDivisionError):
-            _LOGGER.debug("Error getting memory usage, using default value of 0")
+            _LOGGER.debug("Error getting memory usage data - using default value of 0")
             return 0
 
     @property
@@ -879,13 +884,19 @@ class UnraidMemoryUsageSensor(UnraidSystemEntity, SensorEntity):
                 .get("memory", {})
             )
 
-            return {
+            attributes = {
                 "total": self._format_memory_size(memory.get("total", 0)),
                 "used": self._format_memory_size(memory.get("used", 0)),
                 "free": self._format_memory_size(memory.get("free", 0)),
                 "available": self._format_memory_size(memory.get("available", 0)),
                 "active": self._format_memory_size(memory.get("active", 0)),
             }
+
+            # Add API limitation note for memory usage
+            attributes["api_limitation"] = "Real-time memory usage not available in Unraid GraphQL API"
+            attributes["data_source"] = "Placeholder values due to API limitations"
+
+            return attributes
         except (KeyError, AttributeError, TypeError):
             return {}
 
@@ -905,7 +916,7 @@ class UnraidMemoryUsageSensor(UnraidSystemEntity, SensorEntity):
 class UnraidUptimeSensor(UnraidSystemEntity, SensorEntity):
     """Sensor for Unraid uptime."""
 
-    _attr_name = "Uptime"
+    _attr_name = "Server Uptime"
     _attr_icon = ICON_SERVER
     _attr_device_class = None  # Changed from TIMESTAMP to display a formatted string
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -1026,7 +1037,7 @@ class UnraidUptimeSensor(UnraidSystemEntity, SensorEntity):
 class UnraidNotificationSensor(UnraidSystemEntity, SensorEntity):
     """Sensor for Unraid notifications."""
 
-    _attr_name = "Notifications"
+    _attr_name = "Active Notifications"
     _attr_icon = ICON_NOTIFICATION
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_native_unit_of_measurement = None
@@ -1068,32 +1079,55 @@ class UnraidNotificationSensor(UnraidSystemEntity, SensorEntity):
             # Get the most recent notifications (up to 5)
             notification_list = notifications.get("list", [])
 
-            # Limit to 5 most recent notifications
-            recent_notifications = [
-                {
-                    "id": notification.get("id"),
-                    "title": notification.get("title"),
-                    "importance": notification.get("importance"),
-                    "timestamp": notification.get("timestamp"),
+            # Format recent notifications with user-friendly attributes
+            recent_notifications = []
+            for notification in notification_list[:5]:
+                formatted_notification = {
+                    "Title": notification.get("title", "Unknown"),
+                    "Severity": self._format_importance(notification.get("importance", "INFO")),
+                    "Date & Time": self._format_timestamp(notification.get("timestamp")),
                 }
-                for notification in notification_list[:5]
-            ]
+                recent_notifications.append(formatted_notification)
 
-            # Return notification data
+            # Return notification data with user-friendly attribute names
             return {
-                "info_count": info_count,
-                "warning_count": warning_count,
-                "alert_count": alert_count,
-                "recent_notifications": recent_notifications,
+                "Info Notifications": info_count,
+                "Warning Notifications": warning_count,
+                "Alert Notifications": alert_count,
+                "Recent Notifications": recent_notifications,
             }
         except (KeyError, AttributeError, TypeError):
             return {}
+
+    def _format_importance(self, importance: str) -> str:
+        """Format notification importance to user-friendly text."""
+        importance_map = {
+            "INFO": "Information",
+            "WARNING": "Warning",
+            "ALERT": "Alert",
+            "ERROR": "Error",
+            "CRITICAL": "Critical"
+        }
+        return importance_map.get(importance.upper(), importance.title())
+
+    def _format_timestamp(self, timestamp: str | None) -> str:
+        """Format ISO timestamp to user-friendly format."""
+        if not timestamp:
+            return "Unknown"
+
+        try:
+            # Parse the ISO 8601 timestamp
+            dt = dateutil.parser.parse(timestamp)
+            # Format as "May 20, 2025 6:40 PM"
+            return dt.strftime("%B %d, %Y %I:%M %p")
+        except (ValueError, TypeError):
+            return timestamp or "Unknown"
 
 
 class UnraidArrayStateSensor(UnraidArrayEntity, SensorEntity):
     """Sensor for Unraid array state."""
 
-    _attr_name = "Array State"
+    _attr_name = "Array Status"
     _attr_icon = ICON_ARRAY
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
@@ -1165,12 +1199,25 @@ class UnraidArraySpaceUsedSensor(UnraidArrayEntity, SensorEntity):
                 .get("capacity", {})
                 .get("kilobytes", {})
             )
+
+            # Get capacity values in KiB
             used_kib = int(capacity.get("used", "0")) if capacity.get("used") else 0
+            free_kib = int(capacity.get("free", "0")) if capacity.get("free") else 0
+            total_kib = int(capacity.get("total", "0")) if capacity.get("total") else 0
+
+            # Convert to bytes for formatting
             used_bytes = used_kib * 1024
+            free_bytes = free_kib * 1024
+            total_bytes = total_kib * 1024
+
+            # Calculate percentage
+            used_percent = round((used_kib / total_kib) * 100, 1) if total_kib > 0 else 0
 
             return {
-                "used_bytes": used_bytes,
-                "used_formatted": self._format_size(used_bytes),
+                "Used Space": self._format_size(used_bytes),
+                "Free Space": self._format_size(free_bytes),
+                "Total Capacity": self._format_size(total_bytes),
+                "Used Percentage": f"{used_percent}%",
             }
         except (KeyError, AttributeError, TypeError, ValueError):
             return {}
@@ -1288,15 +1335,10 @@ class UnraidArraySpaceFreeSensor(UnraidArrayEntity, SensorEntity):
                 used_bytes = used_kib * 1024
 
                 return {
-                    "free_bytes": free_bytes,
-                    "free_formatted": self._format_size(free_bytes),
-                    "total_bytes": total_bytes,
-                    "total_formatted": self._format_size(total_bytes),
-                    "used_bytes": used_bytes,
-                    "used_formatted": self._format_size(used_bytes),
-                    "used_percent": round(100 - (free_kib / total_kib * 100), 1)
-                    if total_kib > 0
-                    else 0,
+                    "Free Space": self._format_size(free_bytes),
+                    "Total Capacity": self._format_size(total_bytes),
+                    "Used Space": self._format_size(used_bytes),
+                    "Used Percentage": f"{round(100 - (free_kib / total_kib * 100), 1)}%" if total_kib > 0 else "0%",
                 }
 
             # If that fails, try to get from capacity directly
@@ -1323,15 +1365,10 @@ class UnraidArraySpaceFreeSensor(UnraidArrayEntity, SensorEntity):
                 used_bytes = used_kib * 1024
 
                 return {
-                    "free_bytes": free_bytes,
-                    "free_formatted": self._format_size(free_bytes),
-                    "total_bytes": total_bytes,
-                    "total_formatted": self._format_size(total_bytes),
-                    "used_bytes": used_bytes,
-                    "used_formatted": self._format_size(used_bytes),
-                    "used_percent": round(100 - (free_kib / total_kib * 100), 1)
-                    if total_kib > 0
-                    else 0,
+                    "Free Space": self._format_size(free_bytes),
+                    "Total Capacity": self._format_size(total_bytes),
+                    "Used Space": self._format_size(used_bytes),
+                    "Used Percentage": f"{round(100 - (free_kib / total_kib * 100), 1)}%" if total_kib > 0 else "0%",
                 }
 
             # Return empty attributes if we get here
@@ -1821,12 +1858,69 @@ class UnraidDiskSpaceUsedSensor(UnraidDiskEntity, SensorEntity):
 
         super().__init__(coordinator, server_name, "space_used", disk_id, disk_type)
 
-        # Use consistent naming format: "{name} Usage"
-        self._attr_name = f"{disk_name} Usage"
+        # Use consistent naming format with proper capitalization
+        formatted_disk_name = self._format_disk_name_for_display(disk_name)
+        self._attr_name = f"{formatted_disk_name} Usage"
 
         # Store the last known value to preserve it when disk is in standby
         self._last_known_value: float | None = None
         self._last_known_attributes: dict[str, Any] = {}
+
+    def _format_disk_name_for_display(self, disk_name: str) -> str:
+        """Format disk name for user-friendly display."""
+        # Handle numbered disks (disk1, disk2, etc.)
+        if disk_name.startswith("disk") and disk_name[4:].isdigit():
+            disk_number = disk_name[4:]
+            return f"Disk {disk_number}"
+
+        # Handle special disk names with proper capitalization
+        if disk_name.lower() == "cache":
+            return "Cache"
+        elif disk_name.lower() == "parity":
+            return "Parity"
+        elif disk_name.lower() == "garbage":
+            return "Garbage"
+        else:
+            # For other names, capitalize first letter
+            return disk_name.capitalize()
+
+    def _translate_disk_status(self, status: str | None) -> str:
+        """Translate technical disk status codes to user-friendly descriptions."""
+        if not status:
+            return "Unknown"
+
+        status_translations = {
+            "DISK_OK": "Healthy",
+            "DISK_DSBL": "Disabled",
+            "DISK_NP": "Not Present",
+            "DISK_NP_DSBL": "Not Present (Disabled)",
+            "DISK_INVALID": "Invalid",
+            "DISK_WRONG": "Wrong Disk",
+            "DISK_NEW": "New Disk",
+            "DISK_EMULATED": "Emulated",
+            "DISK_MISSING": "Missing",
+            "DISK_ERROR": "Error",
+            "DISK_UNKNOWN": "Unknown Status",
+        }
+
+        return status_translations.get(status, status)
+
+    def _translate_disk_state(self, state: str | None) -> str:
+        """Translate technical disk state codes to user-friendly descriptions."""
+        if not state:
+            return "Unknown"
+
+        state_translations = {
+            "ACTIVE": "Active",
+            "STANDBY": "Standby (Power Saving)",
+            "SPUN_DOWN": "Spun Down",
+            "SPINNING_UP": "Spinning Up",
+            "SPINNING_DOWN": "Spinning Down",
+            "IDLE": "Idle",
+            "OFFLINE": "Offline",
+        }
+
+        return state_translations.get(state.upper(), state)
 
     def _determine_disk_type(self, coordinator, disk_id):
         """Determine the disk type based on where it's found in the array data."""
@@ -1989,22 +2083,19 @@ class UnraidDiskSpaceUsedSensor(UnraidDiskEntity, SensorEntity):
 
                         # Build attributes for parity disk
                         attributes = {
-                            ATTR_DISK_NAME: disk.get("name"),
-                            ATTR_DISK_TYPE: self._disk_type,
-                            ATTR_DISK_SIZE: size_formatted,
-                            "size_bytes": size_bytes,
-                            "status": disk.get("status"),
-                            "state": disk_state,
-                            "rotational": disk.get("rotational", True),
-                            "array_state": array_state,
-                            "usage_percent": 100.0 if array_state == "STARTED" else 0.0,
-                            "used": size_formatted
-                            if array_state == "STARTED"
-                            else "0 B",
-                            "free": "0 B"
-                            if array_state == "STARTED"
-                            else size_formatted,
+                            "Disk Name": disk.get("name"),
+                            "Disk Type": self._disk_type,
+                            "Capacity": size_formatted,
+                            "Health Status": self._translate_disk_status(disk.get("status")),
+                            "Power State": self._translate_disk_state(disk_state),
+                            "Drive Type": "Hard Disk Drive (HDD)" if disk.get("rotational", True) else "Solid State Drive (SSD/NVMe)",
+                            "Array Status": "Started" if array_state == "STARTED" else "Stopped",
+                            "Usage": "100%" if array_state == "STARTED" else "0%",
                         }
+
+                        # Add device path if available
+                        if disk.get("device"):
+                            attributes["Device Path"] = f"/dev/{disk.get('device')}"
 
                         # Store the current attributes for future use
                         self._last_known_attributes = dict(attributes)
@@ -2037,14 +2128,17 @@ class UnraidDiskSpaceUsedSensor(UnraidDiskEntity, SensorEntity):
 
                     # Build base attributes
                     attributes = {
-                        ATTR_DISK_NAME: disk.get("name"),
-                        ATTR_DISK_TYPE: self._disk_type,
-                        ATTR_DISK_SIZE: size_formatted,
-                        "size_bytes": size_bytes,
-                        "status": disk.get("status"),
-                        "state": disk.get("state", "").upper(),
-                        "rotational": disk.get("rotational", True),
+                        "Disk Name": disk.get("name"),
+                        "Disk Type": self._disk_type,
+                        "Capacity": size_formatted,
+                        "Health Status": self._translate_disk_status(disk.get("status")),
+                        "Power State": self._translate_disk_state(disk.get("state", "")),
+                        "Drive Type": "Hard Disk Drive (HDD)" if disk.get("rotational", True) else "Solid State Drive (SSD/NVMe)",
                     }
+
+                    # Add device path if available
+                    if disk.get("device"):
+                        attributes["Device Path"] = f"/dev/{disk.get('device')}"
 
                     # Add file system information if it exists
                     if "fsSize" in disk and "fsUsed" in disk and "fsFree" in disk:
@@ -2066,20 +2160,12 @@ class UnraidDiskSpaceUsedSensor(UnraidDiskEntity, SensorEntity):
 
                         attributes.update(
                             {
-                                "fs_size": self._format_size(fs_size),
-                                "fs_free": self._format_size(fs_free),
-                                "fs_used": self._format_size(fs_used),
-                                "fs_size_bytes": fs_size,
-                                "fs_free_bytes": fs_free,
-                                "fs_used_bytes": fs_used,
+                                "File System Size": self._format_size(fs_size),
+                                "Free Space": self._format_size(fs_free),
+                                "Used Space": self._format_size(fs_used),
+                                "Usage": f"{round((fs_used / fs_size) * 100, 1)}%" if fs_size > 0 else "0%",
                             }
                         )
-
-                        # Add usage percentage
-                        if fs_size > 0:
-                            attributes["usage_percent"] = round(
-                                (fs_used / fs_size) * 100, 1
-                            )
 
                     # Store the current attributes for future use
                     self._last_known_attributes = dict(attributes)

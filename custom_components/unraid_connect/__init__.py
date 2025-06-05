@@ -134,10 +134,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except ConfigEntryNotReady as err:
         _LOGGER.error("Failed to get initial data - please ensure:")
         _LOGGER.error("1. Your API key is correct")
-        _LOGGER.error(
-            "2. You've added http://YOUR_HA_IP:8123 to Unraid Connect's extra origins"
-        )
-        _LOGGER.error("3. You've clicked APPLY after adding the origin")
+        _LOGGER.error("2. Your Unraid server is accessible from Home Assistant")
         raise ConfigEntryNotReady(f"Failed to get initial data: {err}") from err
 
     # Store coordinator and API client

@@ -5,6 +5,7 @@ import logging
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .api import UnraidApiClient, UnraidApiError
@@ -49,6 +50,7 @@ class UnraidRebootButton(UnraidSystemEntity, ButtonEntity):
     _attr_name = "Reboot"
     _attr_icon = "mdi:restart"
     _attr_entity_registry_enabled_default = False
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
@@ -74,6 +76,7 @@ class UnraidShutdownButton(UnraidSystemEntity, ButtonEntity):
     _attr_name = "Shutdown"
     _attr_icon = "mdi:power"
     _attr_entity_registry_enabled_default = False
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
@@ -99,6 +102,7 @@ class UnraidStartArrayButton(UnraidArrayEntity, ButtonEntity):
     _attr_name = "Start Array"
     _attr_icon = ICON_ARRAY
     _attr_entity_registry_enabled_default = False
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
@@ -125,6 +129,7 @@ class UnraidStopArrayButton(UnraidArrayEntity, ButtonEntity):
     _attr_name = "Stop Array"
     _attr_icon = ICON_ARRAY
     _attr_entity_registry_enabled_default = False
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
@@ -151,6 +156,7 @@ class UnraidStartParityCheckButton(UnraidArrayEntity, ButtonEntity):
     _attr_name = "Start Parity Check"
     _attr_icon = "mdi:check-circle"
     _attr_entity_registry_enabled_default = False
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
@@ -177,6 +183,7 @@ class UnraidPauseParityCheckButton(UnraidArrayEntity, ButtonEntity):
     _attr_name = "Pause Parity Check"
     _attr_icon = "mdi:pause-circle"
     _attr_entity_registry_enabled_default = False
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
@@ -203,6 +210,7 @@ class UnraidResumeParityCheckButton(UnraidArrayEntity, ButtonEntity):
     _attr_name = "Resume Parity Check"
     _attr_icon = "mdi:play-circle"
     _attr_entity_registry_enabled_default = False
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
@@ -229,6 +237,7 @@ class UnraidCancelParityCheckButton(UnraidArrayEntity, ButtonEntity):
     _attr_name = "Cancel Parity Check"
     _attr_icon = "mdi:close-circle"
     _attr_entity_registry_enabled_default = False
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,

@@ -1,7 +1,7 @@
 """Constants for the Unraid integration."""
 
 DOMAIN = "unraid"
-DEFAULT_NAME = "Unraid"
+DEFAULT_NAME = "Unraid Connect"
 DEFAULT_SCAN_INTERVAL = 30
 
 # Config flow
