@@ -25,8 +25,10 @@ A comprehensive Home Assistant integration for monitoring and controlling Unraid
 
 This integration requires the **Unraid Connect** plugin to be installed on your Unraid server:
 
-1. Install the Unraid Connect plugin from the Community Applications
+1. Install the Unraid Connect plugin from the Community Applications (version 2025.05.01.2159 or later recommended)
 2. Configure the plugin and obtain an API key - https://docs.unraid.net/API/how-to-use-the-api/
+
+> **Note**: CORS configuration is no longer required! Recent plugin versions have resolved the API origins issue, significantly simplifying the setup process.
 
 ## Installation
 
@@ -218,6 +220,7 @@ When reporting issues, please include:
 **Authentication Failed**
 
 - Verify your API key is correct
+- Ensure the Unraid Connect plugin is running and properly configured
 - Try using the HTTPS URL if your server redirects
 
 **Cannot Connect**
