@@ -1,0 +1,210 @@
+name: ✨ Feature Request
+description: Suggest a new feature or enhancement for the Unraid Connect Integration
+title: "[Enhancement] "
+labels: ["enhancement"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # ✨ Feature Request
+
+        Thank you for suggesting a new feature! This template is for requesting **new features or enhancements** for the Unraid Connect Integration for Home Assistant.
+
+        ## ⚠️ Beta Software & API Limitations Notice
+        This integration is currently in **beta phase** (v0.1.0-beta.6) due to the evolving Unraid GraphQL API. Many feature requests may require upstream API development. See [known limitations](https://github.com/domalab/ha-unraid-connect/issues).
+
+        ## 📋 When to use this template:
+        - ✅ You want to add new functionality to the Unraid Connect integration
+        - ✅ You have ideas for better automation or control options
+        - ✅ You want to suggest monitoring improvements or new sensors
+        - ✅ You want to suggest UI/UX improvements
+        - ✅ You have ideas for new services or entity types
+
+        ## ❌ When NOT to use this template:
+        - 🚫 **Bug Reports**: Existing features are broken → Use "Bug Report" template
+        - 🚫 **Setup Help**: Need help with configuration → Check [documentation](https://github.com/domalab/ha-unraid-connect/blob/main/README.md) first
+        - 🚫 **Known API limitations**: Features already documented as missing in [GitHub Issues #1-#13](https://github.com/domalab/ha-unraid-connect/issues)
+
+        ## 📚 Before You Continue
+        Please check if your feature request already exists:
+        - 🔍 [Search existing issues](https://github.com/domalab/ha-unraid-connect/issues) (both open and closed)
+        - 📖 [Check the documentation](https://github.com/domalab/ha-unraid-connect/blob/main/README.md) to see if the feature already exists
+        - 🔍 [Review known limitations](https://github.com/domalab/ha-unraid-connect/issues) to see if it's an API limitation
+
+  - type: dropdown
+    id: feature_category
+    attributes:
+      label: 🏷️ Feature Category
+      description: "What type of feature are you requesting?"
+      options:
+        - "New sensor type (monitoring, status, etc.)"
+        - "New switch/control entity"
+        - "Enhanced Docker container management"
+        - "Enhanced VM management"
+        - "System monitoring (CPU, memory, network, GPU)"
+        - "Improved disk/array monitoring"
+        - "Network monitoring capabilities"
+        - "UPS monitoring support"
+        - "User script integration"
+        - "New custom service"
+        - "Configuration options"
+        - "Performance optimization"
+        - "UI/UX improvements"
+        - "Documentation improvement"
+        - "GraphQL API enhancement request"
+        - "Feature parity with SSH integration"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: feature_description
+    attributes:
+      label: 📝 Feature Description
+      description: "Clear description of the feature you'd like to see"
+      placeholder: |
+        **What feature would you like:**
+        Add CPU usage monitoring sensors to track real-time CPU utilization and load averages.
+
+        **Why would this be useful:**
+        It would help users monitor system performance and set up automations based on CPU usage.
+
+        **Note:** Please check if this is a known API limitation first: https://github.com/domalab/ha-unraid-connect/issues
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: 🎯 Use Case / Problem Solved
+      description: "What problem does this feature solve? How would you use it?"
+      placeholder: |
+        **Problem:**
+        Currently I cannot monitor CPU usage, which is essential for system performance monitoring.
+
+        **Use Case:**
+        I want to create automations that alert me when CPU usage is high or trigger cooling adjustments.
+
+        **Benefit:**
+        This would help users monitor system performance and prevent overheating or performance issues.
+
+        **API Dependency:**
+        Note if this requires new GraphQL API endpoints from Unraid.
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: 💡 Proposed Solution
+      description: "How do you think this feature should work?"
+      placeholder: |
+        **Implementation idea:**
+        - Add new sensor entities: `sensor.unraid_cpu_usage`, `sensor.unraid_load_average`
+        - Query CPU data from Unraid GraphQL API (if available)
+        - Update every 30 seconds for real-time monitoring
+
+        **UI/UX:**
+        - Show CPU percentage in entity state
+        - Include per-core usage as attributes
+        - Add to device diagnostics
+
+        **API Requirements:**
+        - May require new GraphQL endpoints in Unraid Connect plugin
+      render: markdown
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 🔄 Alternatives Considered
+      description: "Have you considered any alternative solutions or workarounds?"
+      placeholder: |
+        **Current workarounds:**
+        - Using the SSH-based integration (ha-unraid) for CPU monitoring
+        - Setting up external monitoring scripts
+        - Manual checking via Unraid web interface
+
+        **Why they're not ideal:**
+        - SSH integration is separate from GraphQL integration
+        - External scripts add complexity
+        - Manual checking is not automated
+        - GraphQL API should provide comprehensive monitoring
+      render: markdown
+    validations:
+      required: false
+
+  - type: textarea
+    id: unraid_context
+    attributes:
+      label: 🖥️ Unraid Context
+      description: "Relevant information about your Unraid setup"
+      placeholder: |
+        - Unraid version: 6.12.6
+        - Unraid Connect plugin version: 2025.05.01.2159
+        - Array size: 8 drives
+        - Specific hardware or configuration that might be relevant
+        - Current monitoring setup you're using
+        - Whether you also use the SSH integration
+      render: markdown
+    validations:
+      required: false
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 📊 Priority Level
+      description: "How important is this feature to you?"
+      options:
+        - "Low - Nice to have"
+        - "Medium - Would improve my experience"
+        - "High - Significantly impacts usability"
+        - "Critical - Blocking important use cases"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: 🤝 Contribution
+      description: "Would you be willing to help implement this feature?"
+      options:
+        - label: "I'm willing to test development versions"
+        - label: "I can help with documentation"
+        - label: "I have programming skills and could contribute code"
+        - label: "I can provide detailed requirements and feedback"
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: 📝 Additional Context
+      description: "Any other relevant information, mockups, or examples"
+      placeholder: |
+        - Screenshots or mockups of desired UI
+        - Examples from other integrations
+        - Technical considerations
+        - Related feature requests
+      render: markdown
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: ✅ Checklist
+      description: "Please confirm you have done the following:"
+      options:
+        - label: "I have searched existing [open](https://github.com/domalab/ha-unraid-connect/issues) and [closed](https://github.com/domalab/ha-unraid-connect/issues?q=is%3Aissue+is%3Aclosed) issues to ensure this isn't a duplicate"
+          required: true
+        - label: "I have checked [known API limitations](https://github.com/domalab/ha-unraid-connect/issues) to confirm this isn't already documented as missing"
+          required: true
+        - label: "I have clearly described the problem this feature would solve"
+          required: true
+        - label: "I understand this is beta software and feature requests may require upstream API development"
+          required: true
+        - label: "I understand that feature requests might take time or not be implemented if they are not within project scope"
+          required: true

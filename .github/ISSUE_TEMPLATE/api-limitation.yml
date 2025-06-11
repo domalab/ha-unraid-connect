@@ -1,0 +1,259 @@
+name: 🚫 API Limitation Report
+description: Report missing functionality due to Unraid GraphQL API limitations
+title: "[API Limitation] "
+labels: ["api-limitation", "upstream"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # 🚫 API Limitation Report
+
+        This template is for reporting **missing functionality due to Unraid GraphQL API limitations**. Use this when a feature exists in the SSH integration but is missing from the GraphQL API.
+
+        ## ⚠️ Beta Software Notice
+        This integration is currently in **beta phase** (v0.1.0-beta.6) due to the evolving Unraid GraphQL API. Many limitations are already documented in [GitHub Issues #1-#13](https://github.com/domalab/ha-unraid-connect/issues).
+
+        ## 📋 When to use this template:
+        - ✅ Feature exists in SSH integration but missing in GraphQL integration
+        - ✅ GraphQL API doesn't provide necessary endpoints
+        - ✅ Data is available in Unraid but not exposed via GraphQL
+        - ✅ Monitoring capability missing due to API gaps
+        - ✅ Control functionality not available via GraphQL
+
+        ## ❌ When NOT to use this template:
+        - 🚫 **General bugs**: Use "Bug Report" template for software issues
+        - 🚫 **Feature requests**: Use "Feature Request" template for new functionality
+        - 🚫 **Setup help**: Use "Support & Setup Help" template for configuration issues
+        - 🚫 **Known limitations**: Check [existing issues](https://github.com/domalab/ha-unraid-connect/issues) first
+
+        ## 📚 Before You Continue
+
+        Please check:
+        - 🔍 [Search existing issues](https://github.com/domalab/ha-unraid-connect/issues) for this limitation
+        - 📊 [Review feature comparison](https://github.com/domalab/ha-unraid-connect/issues/8) between integrations
+        - 🔄 Consider using [SSH integration](https://github.com/domalab/ha-unraid) for missing features
+
+  - type: dropdown
+    id: limitation_category
+    attributes:
+      label: 🏷️ Limitation Category
+      description: "What type of functionality is missing from the GraphQL API?"
+      options:
+        - "System Monitoring (CPU, memory, network, GPU)"
+        - "VM Management and Control"
+        - "User Scripts Integration"
+        - "UPS Monitoring"
+        - "Disk Power State Detection"
+        - "System Fan Monitoring"
+        - "Parity Check Operations"
+        - "Plugin Management"
+        - "Network Interface Monitoring"
+        - "Advanced Array Operations"
+        - "Hardware Information"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: missing_functionality
+    attributes:
+      label: 📝 Missing Functionality
+      description: "Describe what functionality is missing from the GraphQL API"
+      placeholder: |
+        **What's missing:**
+        CPU usage monitoring - the GraphQL API doesn't provide real-time CPU usage data.
+
+        **Available in SSH integration:**
+        The SSH integration provides CPU usage via /proc/stat parsing and system commands.
+
+        **Impact:**
+        Cannot monitor system performance or create CPU-based automations.
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: ssh_integration_comparison
+    attributes:
+      label: 🔄 SSH Integration Comparison
+      description: "How does the SSH integration provide this functionality?"
+      placeholder: |
+        **SSH integration method:**
+        - Parses /proc/stat for CPU usage
+        - Uses system commands like 'top' or 'htop'
+        - Provides real-time CPU percentage and load averages
+
+        **Entities provided:**
+        - sensor.unraid_cpu_usage
+        - sensor.unraid_load_average_1m
+        - sensor.unraid_load_average_5m
+        - sensor.unraid_load_average_15m
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: graphql_api_gap
+    attributes:
+      label: 🔌 GraphQL API Gap
+      description: "What's missing from the current GraphQL API?"
+      placeholder: |
+        **Current GraphQL API status:**
+        - No CPU monitoring endpoints
+        - No system performance queries
+        - Missing hardware monitoring schema
+
+        **Required API additions:**
+        - CPU usage query
+        - System load monitoring
+        - Hardware performance metrics
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_api_solution
+    attributes:
+      label: 💡 Proposed API Solution
+      description: "What should be added to the GraphQL API to support this functionality?"
+      placeholder: |
+        **Proposed GraphQL schema:**
+        ```graphql
+        type SystemPerformance {
+          cpuUsage: Float!
+          loadAverage1m: Float!
+          loadAverage5m: Float!
+          loadAverage15m: Float!
+        }
+
+        type Query {
+          systemPerformance: SystemPerformance!
+        }
+        ```
+
+        **Implementation notes:**
+        - Query system performance data from /proc/stat
+        - Update every 30 seconds for real-time monitoring
+        - Include per-core CPU usage as optional detail
+      render: markdown
+    validations:
+      required: false
+
+  - type: input
+    id: unraid_version
+    attributes:
+      label: 🖥️ Unraid Version
+      description: "Your Unraid server version"
+      placeholder: "6.12.6"
+    validations:
+      required: true
+
+  - type: input
+    id: unraid_connect_plugin_version
+    attributes:
+      label: 🔌 Unraid Connect Plugin Version
+      description: "Version of the Unraid Connect plugin"
+      placeholder: "2025.05.01.2159"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority_level
+    attributes:
+      label: 📊 Priority Level
+      description: "How critical is this missing functionality?"
+      options:
+        - "Low - Nice to have feature"
+        - "Medium - Useful for monitoring/automation"
+        - "High - Important for system management"
+        - "Critical - Essential for production use"
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_cases
+    attributes:
+      label: 🎯 Use Cases
+      description: "How would you use this functionality if it were available?"
+      placeholder: |
+        **Automation examples:**
+        - Alert when CPU usage exceeds 80%
+        - Trigger cooling adjustments based on load
+        - Monitor system performance trends
+        - Create performance-based notifications
+
+        **Monitoring benefits:**
+        - Real-time system performance visibility
+        - Historical performance tracking
+        - Integration with Home Assistant dashboards
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: workarounds
+    attributes:
+      label: 🔄 Current Workarounds
+      description: "What workarounds are you currently using?"
+      placeholder: |
+        **Current solutions:**
+        - Using SSH integration alongside GraphQL integration
+        - External monitoring tools (Prometheus, etc.)
+        - Manual checking via Unraid web interface
+
+        **Why workarounds aren't ideal:**
+        - Requires multiple integrations
+        - Increased complexity
+        - Not unified in Home Assistant
+      render: markdown
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: upstream_action
+    attributes:
+      label: 🔗 Upstream Action Required
+      description: "This limitation requires action from the Unraid development team"
+      options:
+        - label: "I understand this requires new GraphQL API endpoints from Unraid"
+          required: true
+        - label: "I'm willing to submit this as a feature request to the Unraid API repository"
+          required: false
+        - label: "I can provide additional technical details if needed"
+          required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: ✅ Checklist
+      description: "Please confirm you have done the following:"
+      options:
+        - label: "I have searched existing [issues](https://github.com/domalab/ha-unraid-connect/issues) to ensure this limitation isn't already documented"
+          required: true
+        - label: "I have checked the [feature comparison](https://github.com/domalab/ha-unraid-connect/issues/8) between integrations"
+          required: true
+        - label: "I understand this is a GraphQL API limitation, not an integration bug"
+          required: true
+        - label: "I understand this may require upstream development by the Unraid team"
+          required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ## 📚 Additional Resources
+
+        - **📊 Feature Comparison**: [GraphQL vs SSH Integration](https://github.com/domalab/ha-unraid-connect/issues/8)
+        - **🔄 SSH Integration**: [Production-ready alternative](https://github.com/domalab/ha-unraid)
+        - **🔗 Unraid API**: [Submit upstream requests](https://github.com/unraid/api)
+        - **📖 Documentation**: [Integration docs](https://github.com/domalab/ha-unraid-connect/blob/main/README.md)
+
+        ## ⏱️ What Happens Next?
+
+        1. **Documentation**: We'll document this limitation in our issue tracking
+        2. **Upstream Request**: We may submit this to the Unraid API repository
+        3. **Workaround**: We'll suggest temporary solutions if available
+        4. **Tracking**: We'll track progress on upstream API development
+
+        Thank you for helping improve the Unraid Connect Integration! 🙏

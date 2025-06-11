@@ -1,0 +1,210 @@
+name: 🐛 Bug Report
+description: Report a bug or issue with the Unraid Connect Integration
+title: "[BUG] "
+labels: ["bug"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # 🐛 Bug Report
+
+        Thank you for reporting a bug! This template is for issues with the **Unraid Connect Integration for Home Assistant** that are not working correctly.
+
+        ## ⚠️ Beta Software Notice
+        This integration is currently in **beta phase** (v0.1.0-beta.6) due to the evolving Unraid GraphQL API. Many features may be limited or unreliable. For production use, consider the [SSH-based integration](https://github.com/domalab/ha-unraid).
+
+        ## 📋 When to use this template:
+        - ✅ The Unraid Connect integration was working before but now has issues
+        - ✅ The integration loads but some features don't work as expected
+        - ✅ You're getting error messages in Home Assistant logs related to Unraid Connect
+        - ✅ Sensors, switches, or other entities are not updating correctly
+
+        ## ❌ When NOT to use this template:
+        - 🚫 **Feature Requests**: Want new features for the integration → Use "Feature Request" template
+        - 🚫 **Setup Help**: Need help with initial configuration → Check [documentation](https://github.com/domalab/ha-unraid-connect/blob/main/README.md) first
+        - 🚫 **Known API Limitations**: Issues already documented in [GitHub Issues #1-#13](https://github.com/domalab/ha-unraid-connect/issues)
+
+  - type: input
+    id: unraid_version
+    attributes:
+      label: 🖥️ Unraid Version
+      description: "Your Unraid server version"
+      placeholder: "6.12.6"
+    validations:
+      required: true
+
+  - type: input
+    id: unraid_connect_plugin_version
+    attributes:
+      label: 🔌 Unraid Connect Plugin Version
+      description: "Version of the Unraid Connect plugin (check in Unraid plugins)"
+      placeholder: "2025.05.01.2159"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: bug_category
+    attributes:
+      label: 🏷️ Bug Category
+      description: "What type of issue are you experiencing?"
+      options:
+        - "Integration fails to load/setup"
+        - "Connection issues (authentication, API key)"
+        - "GraphQL API query failures"
+        - "Sensors not updating or showing incorrect data"
+        - "Docker container controls not working"
+        - "VM controls not working (known API limitation)"
+        - "Disk/array monitoring problems"
+        - "Memory value overflow (>4GB systems)"
+        - "Parity check monitoring issues"
+        - "Entity duplication or missing entities"
+        - "Home Assistant crashes/errors"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: bug_description
+    attributes:
+      label: 📝 Bug Description
+      description: "Clear description of what's wrong and what you expected to happen"
+      placeholder: |
+        **What's happening:**
+        Docker container switches don't work - when I try to start/stop containers in HA, nothing happens on Unraid.
+
+        **What should happen:**
+        Containers should start/stop when I toggle the switches in Home Assistant.
+
+        **When did this start:**
+        After updating to version v0.1.0-beta.6
+
+        **Additional context:**
+        Include any error messages, affected entities, or specific scenarios. Note: Some issues may be due to known GraphQL API limitations.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction_steps
+    attributes:
+      label: 🔄 Steps to Reproduce
+      description: "Step-by-step instructions to reproduce the issue"
+      placeholder: |
+        1. Open Home Assistant
+        2. Go to the Unraid integration entities
+        3. Try to toggle a Docker container switch
+        4. Check Unraid dashboard - container state doesn't change
+        5. Check HA logs for any error messages
+      render: markdown
+    validations:
+      required: true
+
+  - type: input
+    id: integration_version
+    attributes:
+      label: 📦 Integration Version
+      description: "Version of the Unraid Connect Integration (check in HACS or manifest.json)"
+      placeholder: "v0.1.0-beta.6"
+    validations:
+      required: true
+
+  - type: input
+    id: ha_version
+    attributes:
+      label: 🏠 Home Assistant Version
+      description: "Your Home Assistant version (2025.1.0+ required)"
+      placeholder: "2025.6.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: ha_installation_type
+    attributes:
+      label: 🏗️ Home Assistant Installation Type
+      description: "How is Home Assistant installed?"
+      options:
+        - "Home Assistant OS (HAOS)"
+        - "Home Assistant Container (Docker)"
+        - "Home Assistant Supervised"
+        - "Home Assistant Core (Python venv)"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 📋 Relevant Logs
+      description: |
+        Home Assistant logs related to the issue. Enable debug logging first:
+
+        ```yaml
+        logger:
+          logs:
+            custom_components.unraid_connect: debug
+        ```
+
+        Then reload the integration and reproduce the issue.
+      placeholder: |
+        ```
+        2025-06-11 10:30:00 ERROR (MainThread) [custom_components.unraid_connect] ...
+        2025-06-11 10:30:01 DEBUG (MainThread) [custom_components.unraid_connect.api] ...
+        ```
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: network_setup
+    attributes:
+      label: 🌐 Network Setup
+      description: "Information about your network configuration"
+      placeholder: |
+        - Unraid server IP: 192.168.1.100
+        - Home Assistant IP: 192.168.1.50
+        - Same subnet: Yes/No
+        - VLANs or firewalls: None/Details
+        - Unraid Connect plugin port: Default/Custom
+        - Can HA reach Unraid GraphQL endpoint: Yes/No/Unknown
+      render: markdown
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: 📝 Additional Context
+      description: "Any other relevant information"
+      placeholder: |
+        - Recent changes to your Unraid or HA setup
+        - Workarounds you've tried
+        - Screenshots of error messages
+        - Specific entities affected
+        - Docker containers or VMs involved
+        - API key regeneration attempts
+        - GraphQL sandbox accessibility
+      render: markdown
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: ✅ Checklist
+      description: "Please confirm you have done the following:"
+      options:
+        - label: "I have searched existing [open](https://github.com/domalab/ha-unraid-connect/issues) and [closed](https://github.com/domalab/ha-unraid-connect/issues?q=is%3Aissue+is%3Aclosed) issues to ensure this isn't a duplicate"
+          required: true
+        - label: "I have checked the [known API limitations](https://github.com/domalab/ha-unraid-connect/issues) to confirm this isn't a documented limitation"
+          required: true
+        - label: "I have reproduced the issue on the latest version to confirm it still exists"
+          required: true
+        - label: "I have tried restarting Home Assistant"
+          required: false
+        - label: "I have tried reloading the Unraid Connect integration"
+          required: false
+        - label: "I have enabled debug logging and included relevant logs"
+          required: false
+        - label: "I understand this is beta software with known limitations"
+          required: true

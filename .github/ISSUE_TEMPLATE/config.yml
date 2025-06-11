@@ -1,0 +1,23 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📚 Documentation
+    url: https://github.com/domalab/ha-unraid-connect/blob/main/README.md
+    about: Read the comprehensive documentation for the Unraid Connect Integration
+  - name: 📖 Setup Guide
+    url: https://github.com/domalab/ha-unraid-connect/blob/main/docs/setup.md
+    about: Step-by-step setup guide for the Unraid Connect Integration
+  - name: 💬 Community Forum
+    url: https://community.home-assistant.io/
+    about: Ask questions and get help from the Home Assistant community
+  - name: 📊 Feature Comparison
+    url: https://github.com/domalab/ha-unraid-connect/issues/8
+    about: Compare features between GraphQL and SSH integrations
+  - name: 🔍 Known Limitations
+    url: https://github.com/domalab/ha-unraid-connect/issues
+    about: Review known API limitations and issues (beta software)
+  - name: 🤖 Ask DeepWiki
+    url: https://deepwiki.com/domalab/ha-unraid-connect
+    about: Get AI-powered help and answers about the integration
+  - name: 🔄 SSH Integration Alternative
+    url: https://github.com/domalab/ha-unraid
+    about: Consider the SSH-based integration for production use
