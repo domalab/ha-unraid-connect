@@ -274,6 +274,210 @@ Since this integration depends on the evolving Unraid GraphQL API, you can also 
 
 See our [Proposed API Issues](PROPOSED_UNRAID_API_ISSUES.md) document for specific improvements needed in the Unraid GraphQL API.
 
+## Development Environment
+
+This section provides comprehensive guidance for setting up a development environment to contribute to the Unraid Connect integration.
+
+### Prerequisites
+
+Before starting development, ensure you have the following software installed:
+
+- **Docker**: Required for running the development container
+  - [Install Docker Desktop](https://docs.docker.com/get-docker/) (Windows/macOS)
+  - [Install Docker Engine](https://docs.docker.com/engine/install/) (Linux)
+  - Minimum version: Docker 20.10+
+
+- **Visual Studio Code**: Primary development environment
+  - [Download VS Code](https://code.visualstudio.com/)
+  - Minimum version: VS Code 1.60+
+
+- **Dev Containers Extension**: Essential for devcontainer support
+  - Install from [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
+  - Or search for "Dev Containers" in VS Code Extensions
+
+### Devcontainer Setup
+
+The project includes a pre-configured development container that provides a complete Home Assistant development environment with all necessary dependencies.
+
+#### Opening the Project in Devcontainer
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/domalab/ha-unraid-connect.git
+   cd ha-unraid-connect
+   ```
+
+2. **Open in VS Code**:
+   ```bash
+   code .
+   ```
+
+3. **Launch the devcontainer**:
+   - VS Code should automatically detect the devcontainer configuration
+   - Click "Reopen in Container" when prompted, or
+   - Use Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) → "Dev Containers: Reopen in Container"
+
+4. **Wait for container setup**:
+   - The container will automatically build and install dependencies
+   - This may take 2-5 minutes on first run
+   - The `scripts/setup` command runs automatically to install Python dependencies
+
+#### What the Devcontainer Provides
+
+The development environment includes:
+
+- **Python 3.13**: Latest Python runtime with Home Assistant compatibility
+- **Home Assistant Core**: Full HA installation for integration testing
+- **Pre-configured Extensions**:
+  - Ruff (Python linting and formatting)
+  - Python language support with Pylance
+  - GitHub Pull Request integration
+  - Coverage gutters for test coverage visualization
+- **Development Dependencies**: All required packages from `requirements.txt`
+- **Port Forwarding**: Home Assistant web interface accessible on port 8123
+- **Additional Packages**: FFmpeg, libturbojpeg0, libpcap-dev for HA multimedia support
+
+### Development Workflow
+
+#### Starting the Development Environment
+
+1. **Launch Home Assistant with the integration**:
+   ```bash
+   scripts/develop
+   ```
+
+   This command:
+   - Creates a `config` directory if it doesn't exist
+   - Initializes Home Assistant configuration
+   - Sets up Python path to include the custom component
+   - Starts Home Assistant in debug mode
+
+2. **Access the Home Assistant interface**:
+   - Open your browser to `http://localhost:8123`
+   - Complete the initial setup if running for the first time
+   - The integration will be available for configuration
+
+#### Testing the Integration
+
+1. **Configure the integration**:
+   - Go to Settings → Devices & Services
+   - Click "Add Integration" and search for "Unraid Connect"
+   - Enter your Unraid server details for testing
+
+2. **Monitor logs and debug output**:
+   - Debug logs are enabled by default when using `scripts/develop`
+   - Watch the terminal for integration-specific log messages
+   - Use Home Assistant's Developer Tools → Logs for web-based log viewing
+
+3. **Hot reload capabilities**:
+   - Home Assistant will automatically detect changes to Python files
+   - Restart Home Assistant (`Ctrl+C` then `scripts/develop`) to reload the integration
+   - Configuration changes may require a full restart
+
+#### Code Quality and Linting
+
+1. **Run code linting**:
+   ```bash
+   scripts/lint
+   ```
+
+   This runs Ruff to check code style and catch potential issues.
+
+2. **Automatic formatting**:
+   - VS Code is configured to format code on save using Ruff
+   - Manual formatting: `Ctrl+Shift+P` → "Format Document"
+
+### Configuration and Files
+
+#### Key Development Files
+
+- **`.devcontainer.json`**: Devcontainer configuration with Python 3.13 base image
+- **`scripts/setup`**: Dependency installation script (runs automatically)
+- **`scripts/develop`**: Home Assistant development server launcher
+- **`scripts/lint`**: Code quality checking script
+- **`requirements.txt`**: Python dependencies for development
+- **`config/`**: Home Assistant configuration directory (created automatically)
+
+#### Customization Options
+
+- **Python interpreter**: Pre-configured to use `/usr/local/bin/python`
+- **Code formatting**: Ruff formatter with 4-space indentation
+- **Type checking**: Basic type checking enabled with Pylance
+- **Port forwarding**: Home Assistant accessible on `localhost:8123`
+
+### Additional Developer Resources
+
+#### Useful Commands
+
+```bash
+# Start development server
+scripts/develop
+
+# Run code linting
+scripts/lint
+
+# Install/update dependencies
+scripts/setup
+
+# Access Home Assistant logs
+tail -f config/home-assistant.log
+
+# Restart Home Assistant service (if running as daemon)
+# Note: Use Ctrl+C and restart scripts/develop for development
+```
+
+#### Debugging and Logging
+
+1. **Enable debug logging** in `config/configuration.yaml`:
+   ```yaml
+   logger:
+     default: info
+     logs:
+       custom_components.unraid_connect: debug
+   ```
+
+2. **Use VS Code debugging**:
+   - Set breakpoints in Python code
+   - Use "Python: Current File" debug configuration
+   - Attach to running Home Assistant process if needed
+
+#### Testing Procedures
+
+1. **Manual testing**:
+   - Test integration setup and configuration
+   - Verify entity creation and updates
+   - Test service calls and automation triggers
+
+2. **Integration testing**:
+   - Use a real Unraid server with Connect plugin for full testing
+   - Test various Unraid configurations (different array states, containers, etc.)
+   - Verify error handling with network issues or API failures
+
+3. **Code quality checks**:
+   - Run `scripts/lint` before committing
+   - Ensure all new code follows existing patterns
+   - Add appropriate error handling and logging
+
+#### Contribution Workflow
+
+1. **Before starting development**:
+   - Check existing issues and pull requests
+   - Create an issue to discuss major changes
+   - Fork the repository and create a feature branch
+
+2. **During development**:
+   - Follow the existing code style and patterns
+   - Add appropriate logging and error handling
+   - Test changes thoroughly with real Unraid servers
+
+3. **Before submitting**:
+   - Run `scripts/lint` to ensure code quality
+   - Test the integration with various Unraid configurations
+   - Update documentation if adding new features
+   - Create a detailed pull request description
+
+For more detailed contribution guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
