@@ -1,0 +1,67 @@
+[MASTER]
+# Ignore Home Assistant modules so that missing dependency errors are not raised
+ignored-modules=homeassistant,homeassistant.*
+# A comma-separated list of file extensions that should be checked
+extension-pkg-whitelist=*.py
+# Add files or directories to the blacklist
+ignore=CVS,tests
+# Use multiple processes to speed up Pylint
+jobs=4
+
+[MESSAGES CONTROL]
+# Disable specific messages
+disable=
+    duplicate-code,
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    too-many-locals,
+    too-many-branches,
+    too-many-statements,
+    too-many-arguments,
+    too-many-instance-attributes,
+    too-few-public-methods,
+    broad-exception-caught,
+    import-error,
+    no-name-in-module,
+    wrong-import-position,
+    wrong-import-order,
+    line-too-long,
+    import-self,
+    trailing-whitespace,
+    missing-final-newline,
+    too-many-nested-blocks,
+    too-many-return-statements,
+    too-many-lines,
+    unused-import,
+    unused-variable,
+    unnecessary-pass,
+    no-else-return,
+    logging-fstring-interpolation,
+    consider-using-in,
+    consider-using-get,
+    chained-comparison,
+    arguments-renamed,
+    overridden-final-method,
+    too-many-ancestors,
+    unexpected-keyword-arg,
+    abstract-method,
+    consider-using-dict-items,
+    too-many-positional-arguments,
+    redefined-outer-name,
+    reimported,
+    import-outside-toplevel,
+    raise-missing-from,
+    unused-argument,
+    no-else-raise,
+    no-else-continue,
+    bad-except-order,
+    f-string-without-interpolation,
+    attribute-defined-outside-init,
+    superfluous-parens,
+    unsubscriptable-object,
+    protected-access
+
+[FORMAT]
+# Maximum number of characters on a single line
+max-line-length=120

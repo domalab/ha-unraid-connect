@@ -310,3 +310,29 @@ Temporary Items
 .directory
 .Trash-*
 .nfs*
+
+# Local History for Visual Studio Code
+.history/
+custom_components/.DS_Store
+.gitignore
+.DS_Store
+.json
+
+# artifacts
+__pycache__
+.pytest*
+*.egg-info
+*/build/*
+*/dist/*
+
+
+# misc
+.coverage
+.vscode
+coverage.xml
+.ruff_cache
+
+
+# Home Assistant configuration
+config/*
+!config/configuration.yaml
