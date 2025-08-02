@@ -65,8 +65,9 @@ async def async_setup_entry(
 
     # Add system sensors
     system_entities.append(UnraidSystemStateSensor(coordinator, name))
-    # CPU usage sensor disabled - Unraid GraphQL API doesn't provide real-time CPU usage data
-    # entities.append(UnraidCpuUsageSensor(coordinator, name))
+
+    # CPU usage sensor - now available in v4.12 GraphQL API
+    entities.append(UnraidCpuUsageSensor(coordinator, name))
 
     # Add other system sensors to entities directly if data is available
     cpu_temp = (
@@ -86,8 +87,9 @@ async def async_setup_entry(
         "hardware", {}
     ):
         entities.append(UnraidMotherboardTempSensor(coordinator, name))
-    # Memory usage sensor disabled - Unraid GraphQL API doesn't provide real-time memory usage data
-    # entities.append(UnraidMemoryUsageSensor(coordinator, name))
+
+    # Memory usage sensor - now available in v4.12 GraphQL API
+    entities.append(UnraidMemoryUsageSensor(coordinator, name))
     entities.append(UnraidUptimeSensor(coordinator, name))
     entities.append(UnraidNotificationSensor(coordinator, name))
 
@@ -182,6 +184,24 @@ async def async_setup_entry(
 
     # Add share entities to the main list
     entities.extend(share_entities)
+
+    # Add UPS sensors if UPS devices are available
+    ups_data = coordinator.data.get("ups_devices", {}).get("ups_devices", [])
+    _LOGGER.debug("UPS sensor setup - UPS data: %s", ups_data)
+    for ups_device in ups_data:
+        if ups_device.get("id"):
+            ups_id = ups_device["id"]
+            ups_name = ups_device.get("name", f"UPS {ups_id}")
+            _LOGGER.info(
+                "Creating UPS sensors for device: %s (ID: %s)", ups_name, ups_id
+            )
+            entities.append(UnraidUPSPowerSensor(coordinator, name, ups_id, ups_name))
+            entities.append(UnraidUPSStatusSensor(coordinator, name, ups_id, ups_name))
+
+    if not ups_data:
+        _LOGGER.debug(
+            "No UPS devices found during sensor setup - UPS sensors will be created when data becomes available"
+        )
 
     async_add_entities(entities)
 
@@ -292,7 +312,11 @@ class UnraidCpuUsageSensor(UnraidSystemEntity, SensorEntity):
             # Check if we have usage data in cpu_info
             if cpu_info and "usage" in cpu_info:
                 try:
-                    return round(float(cpu_info["usage"]), 1)
+                    usage_value = float(cpu_info["usage"])
+                    _LOGGER.debug(
+                        "Found CPU usage from enhanced API: %s%%", usage_value
+                    )
+                    return round(usage_value, 1)
                 except (ValueError, TypeError):
                     pass
 
@@ -348,7 +372,9 @@ class UnraidCpuUsageSensor(UnraidSystemEntity, SensorEntity):
 
             # If we get here, we couldn't find CPU usage data
             # This is a known limitation of the Unraid GraphQL API
-            _LOGGER.debug("CPU usage data not available in Unraid GraphQL API - this is a known limitation")
+            _LOGGER.debug(
+                "CPU usage data not available in Unraid GraphQL API - this is a known limitation"
+            )
             return 0
         except (KeyError, AttributeError, TypeError):
             _LOGGER.debug("Error getting CPU usage data - using default value of 0")
@@ -401,9 +427,20 @@ class UnraidCpuUsageSensor(UnraidSystemEntity, SensorEntity):
             if versions:
                 attributes["unraid_version"] = versions.get("unraid", "Unknown")
 
-            # Add API limitation note for CPU usage
-            attributes["api_limitation"] = "Real-time CPU usage not available in Unraid GraphQL API"
-            attributes["data_source"] = "Static hardware information only"
+            # Check if we have real CPU usage data
+            cpu_info = (
+                self.coordinator.data.get("system_info", {})
+                .get("info", {})
+                .get("cpu", {})
+            )
+
+            has_real_usage = cpu_info and "usage" in cpu_info and cpu_info["usage"] > 0
+
+            if not has_real_usage:
+                # Add API limitation note for CPU usage
+                attributes["api_limitation"] = (
+                    "Real-time CPU usage not available in Unraid GraphQL API"
+                )
 
             return attributes
         except (KeyError, AttributeError, TypeError):
@@ -429,6 +466,20 @@ class UnraidCpuTempSensor(UnraidSystemEntity, SensorEntity):
 
     def _get_temperature_from_direct_source(self) -> float | None:
         """Get CPU temperature from direct temperature source."""
+        # Try to get from enhanced disk info (some systems report CPU temp here)
+        enhanced_disks = self.coordinator.data.get("enhanced_disks", {}).get(
+            "disks", []
+        )
+        for disk in enhanced_disks:
+            if disk.get("type", "").lower() in ["cpu", "processor"] and disk.get(
+                "temperature"
+            ):
+                try:
+                    return round(float(disk["temperature"]), 1)
+                except (ValueError, TypeError):
+                    pass
+
+        # Try legacy temperature sources
         temperatures = self.coordinator.data.get("system_info", {}).get(
             "temperatures", {}
         )
@@ -839,7 +890,8 @@ class UnraidMemoryUsageSensor(UnraidSystemEntity, SensorEntity):
                     except (ValueError, TypeError):
                         pass
 
-                total = memory.get("total", 0)
+                # Try both v4.12 field names (max) and older field names (total)
+                total = memory.get("max", memory.get("total", 0))
                 # Use available memory as free for more accurate usage calculation
                 # (available accounts for buffer/cache that can be reclaimed)
                 available = memory.get("available", memory.get("free", 0))
@@ -848,8 +900,12 @@ class UnraidMemoryUsageSensor(UnraidSystemEntity, SensorEntity):
                     used_percent = 100 - (
                         available / total * 100
                     )  # Calculate based on available memory
-                    _LOGGER.debug("Calculated memory usage: %s%% (total: %s, available: %s)",
-                                round(used_percent, 1), total, available)
+                    _LOGGER.debug(
+                        "Calculated memory usage: %s%% (total: %s, available: %s)",
+                        round(used_percent, 1),
+                        total,
+                        available,
+                    )
                     return round(used_percent, 1)
 
             # If we don't have valid memory data in the info structure,
@@ -867,7 +923,9 @@ class UnraidMemoryUsageSensor(UnraidSystemEntity, SensorEntity):
                 return 0
 
             # Default to 0 if we can't calculate
-            _LOGGER.debug("Memory usage data not available in Unraid GraphQL API - this is a known limitation")
+            _LOGGER.debug(
+                "Memory usage data not available in Unraid GraphQL API - this is a known limitation"
+            )
             return 0
         except (KeyError, AttributeError, TypeError, ZeroDivisionError):
             _LOGGER.debug("Error getting memory usage data - using default value of 0")
@@ -883,17 +941,15 @@ class UnraidMemoryUsageSensor(UnraidSystemEntity, SensorEntity):
                 .get("memory", {})
             )
 
-            attributes = {
-                "total": self._format_memory_size(memory.get("total", 0)),
-                "used": self._format_memory_size(memory.get("used", 0)),
-                "free": self._format_memory_size(memory.get("free", 0)),
-                "available": self._format_memory_size(memory.get("available", 0)),
-                "active": self._format_memory_size(memory.get("active", 0)),
-            }
+            # Use v4.12 field names (max) or fallback to older field names (total)
+            max_memory = memory.get("max", memory.get("total", 0))
+            buffcache_memory = memory.get("buffcache", 0)
 
-            # Add API limitation note for memory usage
-            attributes["api_limitation"] = "Real-time memory usage not available in Unraid GraphQL API"
-            attributes["data_source"] = "Placeholder values due to API limitations"
+            # Build attributes with only real data from the API
+            attributes = {
+                "total_memory": self._format_memory_size(max_memory),
+                "buffer_cache": self._format_memory_size(buffcache_memory),
+            }
 
             return attributes
         except (KeyError, AttributeError, TypeError):
@@ -1083,8 +1139,12 @@ class UnraidNotificationSensor(UnraidSystemEntity, SensorEntity):
             for notification in notification_list[:5]:
                 formatted_notification = {
                     "Title": notification.get("title", "Unknown"),
-                    "Severity": self._format_importance(notification.get("importance", "INFO")),
-                    "Date & Time": self._format_timestamp(notification.get("timestamp")),
+                    "Severity": self._format_importance(
+                        notification.get("importance", "INFO")
+                    ),
+                    "Date & Time": self._format_timestamp(
+                        notification.get("timestamp")
+                    ),
                 }
                 recent_notifications.append(formatted_notification)
 
@@ -1105,7 +1165,7 @@ class UnraidNotificationSensor(UnraidSystemEntity, SensorEntity):
             "WARNING": "Warning",
             "ALERT": "Alert",
             "ERROR": "Error",
-            "CRITICAL": "Critical"
+            "CRITICAL": "Critical",
         }
         return importance_map.get(importance.upper(), importance.title())
 
@@ -1210,7 +1270,9 @@ class UnraidArraySpaceUsedSensor(UnraidArrayEntity, SensorEntity):
             total_bytes = total_kib * 1024
 
             # Calculate percentage
-            used_percent = round((used_kib / total_kib) * 100, 1) if total_kib > 0 else 0
+            used_percent = (
+                round((used_kib / total_kib) * 100, 1) if total_kib > 0 else 0
+            )
 
             return {
                 "Used Space": self._format_size(used_bytes),
@@ -1337,7 +1399,9 @@ class UnraidArraySpaceFreeSensor(UnraidArrayEntity, SensorEntity):
                     "Free Space": self._format_size(free_bytes),
                     "Total Capacity": self._format_size(total_bytes),
                     "Used Space": self._format_size(used_bytes),
-                    "Used Percentage": f"{round(100 - (free_kib / total_kib * 100), 1)}%" if total_kib > 0 else "0%",
+                    "Used Percentage": f"{round(100 - (free_kib / total_kib * 100), 1)}%"
+                    if total_kib > 0
+                    else "0%",
                 }
 
             # If that fails, try to get from capacity directly
@@ -1367,7 +1431,9 @@ class UnraidArraySpaceFreeSensor(UnraidArrayEntity, SensorEntity):
                     "Free Space": self._format_size(free_bytes),
                     "Total Capacity": self._format_size(total_bytes),
                     "Used Space": self._format_size(used_bytes),
-                    "Used Percentage": f"{round(100 - (free_kib / total_kib * 100), 1)}%" if total_kib > 0 else "0%",
+                    "Used Percentage": f"{round(100 - (free_kib / total_kib * 100), 1)}%"
+                    if total_kib > 0
+                    else "0%",
                 }
 
             # Return empty attributes if we get here
@@ -2123,10 +2189,16 @@ class UnraidDiskSpaceUsedSensor(UnraidDiskEntity, SensorEntity):
                             "Disk Name": disk.get("name"),
                             "Disk Type": self._disk_type,
                             "Capacity": size_formatted,
-                            "Health Status": self._translate_disk_status(disk.get("status")),
+                            "Health Status": self._translate_disk_status(
+                                disk.get("status")
+                            ),
                             "Power State": self._translate_disk_state(disk_state),
-                            "Drive Type": "Hard Disk Drive (HDD)" if disk.get("rotational", True) else "Solid State Drive (SSD/NVMe)",
-                            "Array Status": "Started" if array_state == "STARTED" else "Stopped",
+                            "Drive Type": "Hard Disk Drive (HDD)"
+                            if disk.get("rotational", True)
+                            else "Solid State Drive (SSD/NVMe)",
+                            "Array Status": "Started"
+                            if array_state == "STARTED"
+                            else "Stopped",
                             "Usage": "100%" if array_state == "STARTED" else "0%",
                         }
 
@@ -2168,9 +2240,15 @@ class UnraidDiskSpaceUsedSensor(UnraidDiskEntity, SensorEntity):
                         "Disk Name": disk.get("name"),
                         "Disk Type": self._disk_type,
                         "Capacity": size_formatted,
-                        "Health Status": self._translate_disk_status(disk.get("status")),
-                        "Power State": self._translate_disk_state(disk.get("state", "")),
-                        "Drive Type": "Hard Disk Drive (HDD)" if disk.get("rotational", True) else "Solid State Drive (SSD/NVMe)",
+                        "Health Status": self._translate_disk_status(
+                            disk.get("status")
+                        ),
+                        "Power State": self._translate_disk_state(
+                            disk.get("state", "")
+                        ),
+                        "Drive Type": "Hard Disk Drive (HDD)"
+                        if disk.get("rotational", True)
+                        else "Solid State Drive (SSD/NVMe)",
                     }
 
                     # Add device path if available
@@ -2200,7 +2278,9 @@ class UnraidDiskSpaceUsedSensor(UnraidDiskEntity, SensorEntity):
                                 "File System Size": self._format_size(fs_size),
                                 "Free Space": self._format_size(fs_free),
                                 "Used Space": self._format_size(fs_used),
-                                "Usage": f"{round((fs_used / fs_size) * 100, 1)}%" if fs_size > 0 else "0%",
+                                "Usage": f"{round((fs_used / fs_size) * 100, 1)}%"
+                                if fs_size > 0
+                                else "0%",
                             }
                         )
 
@@ -2733,3 +2813,123 @@ class UnraidShareSpaceFreeSensor(UnraidShareEntity, SensorEntity):
             return f"{size_bytes / (1024**3):.2f} GiB"
         return f"{size_bytes / (1024**4):.2f} TiB"
 
+
+class UnraidUPSPowerSensor(UnraidSystemEntity, SensorEntity):
+    """Sensor for UPS power consumption."""
+
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = "W"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:flash"
+
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+        ups_id: str,
+        ups_name: str,
+    ) -> None:
+        """Initialize the sensor."""
+        self.ups_id = ups_id
+        self.ups_name = ups_name
+        super().__init__(coordinator, server_name, f"ups_power_{ups_id}")
+        self._attr_name = f"{ups_name} Power"
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the UPS power consumption."""
+        try:
+            ups_devices = self.coordinator.data.get("ups_devices", {}).get(
+                "ups_devices", []
+            )
+            for device in ups_devices:
+                if device.get("id") == self.ups_id:
+                    power_data = device.get("power", {})
+                    load_percentage = power_data.get("loadPercentage", 0)
+                    # Estimate power consumption based on load percentage
+                    # This is an approximation since actual wattage depends on UPS capacity
+                    return (
+                        float(load_percentage) if load_percentage is not None else None
+                    )
+            return None
+        except (KeyError, AttributeError, TypeError, ValueError):
+            return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the state attributes."""
+        try:
+            ups_devices = self.coordinator.data.get("ups_devices", {}).get(
+                "ups_devices", []
+            )
+            for device in ups_devices:
+                if device.get("id") == self.ups_id:
+                    power_data = device.get("power", {})
+                    return {
+                        "ups_id": self.ups_id,
+                        "ups_name": self.ups_name,
+                        "input_voltage": power_data.get("inputVoltage"),
+                        "output_voltage": power_data.get("outputVoltage"),
+                        "load_percentage": power_data.get("loadPercentage"),
+                    }
+            return {}
+        except (KeyError, AttributeError, TypeError):
+            return {}
+
+
+class UnraidUPSStatusSensor(UnraidSystemEntity, SensorEntity):
+    """Sensor for UPS status."""
+
+    _attr_icon = "mdi:battery-outline"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: UnraidDataUpdateCoordinator,
+        server_name: str,
+        ups_id: str,
+        ups_name: str,
+    ) -> None:
+        """Initialize the sensor."""
+        self.ups_id = ups_id
+        self.ups_name = ups_name
+        super().__init__(coordinator, server_name, f"ups_status_{ups_id}")
+        self._attr_name = f"{ups_name} Status"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the UPS status."""
+        try:
+            ups_devices = self.coordinator.data.get("ups_devices", {}).get(
+                "ups_devices", []
+            )
+            for device in ups_devices:
+                if device.get("id") == self.ups_id:
+                    return device.get("status", "Unknown")
+            return "Unknown"
+        except (KeyError, AttributeError, TypeError):
+            return "Unknown"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the state attributes."""
+        try:
+            ups_devices = self.coordinator.data.get("ups_devices", {}).get(
+                "ups_devices", []
+            )
+            for device in ups_devices:
+                if device.get("id") == self.ups_id:
+                    battery_data = device.get("battery", {})
+                    return {
+                        "ups_id": self.ups_id,
+                        "ups_name": self.ups_name,
+                        "model": device.get("model"),
+                        "battery_charge_level": battery_data.get("chargeLevel"),
+                        "battery_estimated_runtime": battery_data.get(
+                            "estimatedRuntime"
+                        ),
+                        "battery_health": battery_data.get("health"),
+                    }
+            return {}
+        except (KeyError, AttributeError, TypeError):
+            return {}

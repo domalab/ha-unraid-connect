@@ -127,16 +127,28 @@ class UnraidApiClient:
         # This is important for GraphQL syntax
         cleaned_lines = []
         for line in query.split("\n"):
-            # Remove comments (lines starting with #)
-            if "#" in line:
-                line = line.split("#")[0]
-
             stripped = line.strip()
-            if stripped:
-                cleaned_lines.append(stripped)
+            # Skip empty lines and lines that are only comments
+            if stripped and not stripped.startswith("#"):
+                # Remove inline comments but preserve the rest of the line
+                if "#" in stripped:
+                    stripped = stripped.split("#")[0].strip()
+                if stripped:  # Only add if there's still content after comment removal
+                    cleaned_lines.append(stripped)
 
         # Join with a single space
         query = " ".join(cleaned_lines)
+
+        # Debug: Check if query is empty
+        if not query.strip():
+            _LOGGER.error(
+                "Query is empty after cleaning! Original query length: %d", len(query)
+            )
+            return {"errors": [{"message": "Empty query after cleaning"}]}
+
+        _LOGGER.debug(
+            "Cleaned query: %s", query[:200] + "..." if len(query) > 200 else query
+        )
 
         # Extract operation name if present
         operation_name: str | None = None
@@ -225,7 +237,9 @@ class UnraidApiClient:
     # Note: Spindown detection methods removed as the Unraid Connect GraphQL API does not provide
     # reliable disk power state information. All disks are now queried consistently.
 
-    async def _get_disk_health_info(self, disk_ids: list[str] | None = None) -> dict[str, dict[str, Any]]:
+    async def _get_disk_health_info(
+        self, disk_ids: list[str] | None = None
+    ) -> dict[str, dict[str, Any]]:
         """Get disk health information for all disks.
 
         Note: Spindown protection has been removed as the Unraid Connect GraphQL API
@@ -281,7 +295,9 @@ class UnraidApiClient:
 
         return disk_health
 
-    def _find_matching_health_data(self, disk: dict[str, Any], disk_health: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    def _find_matching_health_data(
+        self, disk: dict[str, Any], disk_health: dict[str, dict[str, Any]]
+    ) -> dict[str, Any] | None:
         """Find matching health data for a disk by ID, device, or name."""
         disk_id = disk.get("id")
 
@@ -309,7 +325,11 @@ class UnraidApiClient:
         if disk_serial:
             for health_disk_id, health_disk_data in disk_health.items():
                 if health_disk_id.endswith(":" + disk_serial):
-                    _LOGGER.debug("Matched disk %s by serial number %s", disk.get("name"), disk_serial)
+                    _LOGGER.debug(
+                        "Matched disk %s by serial number %s",
+                        disk.get("name"),
+                        disk_serial,
+                    )
                     return health_disk_data
 
         # Try to match by device name or other identifiers
@@ -322,7 +342,9 @@ class UnraidApiClient:
 
             # Match by device path
             if disk_device and health_device and disk_device == health_device:
-                _LOGGER.debug("Matched disk %s by device path %s", disk_name, disk_device)
+                _LOGGER.debug(
+                    "Matched disk %s by device path %s", disk_name, disk_device
+                )
                 return health_disk_data
 
             # Match by name
@@ -493,8 +515,7 @@ class UnraidApiClient:
 
         # Try to get comprehensive system info from the info endpoint
         try:
-            # Use a simplified system info query that avoids the large integer issue
-            # We'll query CPU and OS info separately from memory to avoid the GraphQL Int overflow
+            # Enhanced system info query for v4.12 with memory monitoring and CPU details
             system_info_query = """
             query GetSystemInfo {
                 info {
@@ -505,6 +526,33 @@ class UnraidApiClient:
                         threads
                         speed
                         speedmax
+                        speedmin
+                        voltage
+                        socket
+                        cache
+                        flags
+                    }
+                    memory {
+                        max
+                        total
+                        free
+                        used
+                        active
+                        available
+                        buffcache
+                        swaptotal
+                        swapused
+                        swapfree
+                        layout {
+                            size
+                            bank
+                            type
+                            clockSpeed
+                            formFactor
+                            manufacturer
+                            partNum
+                            serialNum
+                        }
                     }
                     os {
                         platform
@@ -513,12 +561,38 @@ class UnraidApiClient:
                         uptime
                         hostname
                         kernel
+                        arch
+                        codename
+                        build
                     }
                     versions {
                         unraid
                         kernel
                         docker
+                        openssl
+                        systemOpenssl
+                        node
+                        npm
+                        python
+                        gcc
                     }
+                    system {
+                        manufacturer
+                        model
+                        version
+                        serial
+                        uuid
+                        sku
+                    }
+                    baseboard {
+                        manufacturer
+                        model
+                        version
+                        serial
+                        assetTag
+                    }
+                    time
+                    machineId
                 }
             }
             """
@@ -526,11 +600,7 @@ class UnraidApiClient:
             _LOGGER.debug("Fetching comprehensive system info")
             response = await self._send_graphql_request(system_info_query)
 
-            if (
-                response
-                and "data" in response
-                and "info" in response["data"]
-            ):
+            if response and "data" in response and "info" in response["data"]:
                 info_data = response["data"]["info"]
 
                 # Create proper system data structure
@@ -680,17 +750,24 @@ class UnraidApiClient:
                     if total_kb > 0:
                         usage_percent = (used_kb / total_kb) * 100
                         # Cap at reasonable values for memory usage
-                        estimated_usage = min(max(usage_percent * 0.1, 5), 95)  # Scale down and bound
+                        estimated_usage = min(
+                            max(usage_percent * 0.1, 5), 95
+                        )  # Scale down and bound
 
-                        system_data["info"]["memory"].update({
-                            "total": 1,  # Placeholder to avoid division by zero
-                            "free": 0,
-                            "used": 1,
-                            "active": 0,
-                            "available": 0,
-                            "usage": round(estimated_usage, 1),
-                        })
-                        _LOGGER.debug("Estimated memory usage from array capacity: %s%%", estimated_usage)
+                        system_data["info"]["memory"].update(
+                            {
+                                "total": 1,  # Placeholder to avoid division by zero
+                                "free": 0,
+                                "used": 1,
+                                "active": 0,
+                                "available": 0,
+                                "usage": round(estimated_usage, 1),
+                            }
+                        )
+                        _LOGGER.debug(
+                            "Estimated memory usage from array capacity: %s%%",
+                            estimated_usage,
+                        )
                         return
 
             # If array capacity approach fails, set safe defaults
@@ -705,7 +782,9 @@ class UnraidApiClient:
                     "available": 0,
                     "usage": 0,
                 }
-                _LOGGER.debug("Set default memory values due to GraphQL API limitations")
+                _LOGGER.debug(
+                    "Set default memory values due to GraphQL API limitations"
+                )
 
         except Exception as err:
             _LOGGER.debug("Error getting memory info: %s", err)
@@ -756,14 +835,18 @@ class UnraidApiClient:
                 if "info" in system_data and "memory" in system_data["info"]:
                     system_data["info"]["memory"].update(memory_stats)
                     self._calculate_memory_usage(system_data["info"]["memory"])
-                    _LOGGER.debug("Updated memory info from system stats: %s", memory_stats)
+                    _LOGGER.debug(
+                        "Updated memory info from system stats: %s", memory_stats
+                    )
 
         except Exception as err:
             _LOGGER.debug("System stats memory query failed: %s", err)
             # Try to estimate memory from other sources or use defaults
             await self._estimate_memory_from_other_sources(system_data)
 
-    async def _estimate_memory_from_other_sources(self, system_data: dict[str, Any]) -> None:
+    async def _estimate_memory_from_other_sources(
+        self, system_data: dict[str, Any]
+    ) -> None:
         """Try to estimate memory usage from other available data sources."""
         try:
             # For now, we'll set some reasonable default values
@@ -776,15 +859,19 @@ class UnraidApiClient:
                 # If we don't have any memory data, set some defaults
                 if memory_info.get("total", 0) == 0:
                     # Set a placeholder that indicates we have a system but can't measure memory
-                    memory_info.update({
-                        "total": 1,  # Placeholder to avoid division by zero
-                        "free": 0,
-                        "used": 1,
-                        "active": 0,
-                        "available": 0,
-                        "usage": 0,  # Will be calculated as 0% since we can't get real data
-                    })
-                    _LOGGER.debug("Set placeholder memory values due to GraphQL limitations")
+                    memory_info.update(
+                        {
+                            "total": 1,  # Placeholder to avoid division by zero
+                            "free": 0,
+                            "used": 1,
+                            "active": 0,
+                            "available": 0,
+                            "usage": 0,  # Will be calculated as 0% since we can't get real data
+                        }
+                    )
+                    _LOGGER.debug(
+                        "Set placeholder memory values due to GraphQL limitations"
+                    )
 
         except Exception as err:
             _LOGGER.debug("Error estimating memory from other sources: %s", err)
@@ -793,7 +880,17 @@ class UnraidApiClient:
         """Process memory values to ensure they are in the correct format."""
         try:
             # Convert string values to integers if needed
-            for key in ["total", "free", "used", "active", "available", "buffcache", "swaptotal", "swapused", "swapfree"]:
+            for key in [
+                "total",
+                "free",
+                "used",
+                "active",
+                "available",
+                "buffcache",
+                "swaptotal",
+                "swapused",
+                "swapfree",
+            ]:
                 if key in memory_data and isinstance(memory_data[key], str):
                     try:
                         memory_data[key] = int(memory_data[key])
@@ -813,8 +910,12 @@ class UnraidApiClient:
             if total > 0:
                 used_percent = 100 - (available / total * 100)
                 memory_data["usage"] = round(used_percent, 1)
-                _LOGGER.debug("Calculated memory usage: %s%% (total: %s, available: %s)",
-                            memory_data["usage"], total, available)
+                _LOGGER.debug(
+                    "Calculated memory usage: %s%% (total: %s, available: %s)",
+                    memory_data["usage"],
+                    total,
+                    available,
+                )
             else:
                 memory_data["usage"] = 0
                 _LOGGER.debug("Cannot calculate memory usage: total memory is 0")
@@ -897,7 +998,9 @@ class UnraidApiClient:
 
         return array_data
 
-    async def _extract_flash_drive_from_existing_data(self, array_data: dict[str, Any]) -> dict[str, Any] | None:
+    async def _extract_flash_drive_from_existing_data(
+        self, array_data: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Extract flash drive data from existing disk health information."""
         try:
             # Get disk health information for all disks
@@ -905,15 +1008,24 @@ class UnraidApiClient:
             disk_health = await self._get_disk_health_info()
 
             if not disk_health:
-                _LOGGER.debug("No disk health data available for flash drive extraction")
+                _LOGGER.debug(
+                    "No disk health data available for flash drive extraction"
+                )
                 return None
 
-            _LOGGER.debug("Searching for flash drive among %d disks in health data", len(disk_health))
+            _LOGGER.debug(
+                "Searching for flash drive among %d disks in health data",
+                len(disk_health),
+            )
 
             # Look for the flash drive based on characteristics
             for disk_id, disk_data in disk_health.items():
                 if self._is_flash_drive(disk_data):
-                    _LOGGER.info("Identified flash drive: %s (%s)", disk_data.get("name"), disk_data.get("device"))
+                    _LOGGER.info(
+                        "Identified flash drive: %s (%s)",
+                        disk_data.get("name"),
+                        disk_data.get("device"),
+                    )
                     return self._convert_disk_to_flash_data(disk_data)
 
             _LOGGER.debug("No flash drive found among available disks")
@@ -932,7 +1044,9 @@ class UnraidApiClient:
             partitions = disk.get("partitions", [])
             for partition in partitions:
                 if partition.get("fsType", "").upper() == "VFAT":
-                    _LOGGER.debug("Found USB device with VFAT partition: %s", disk.get("name"))
+                    _LOGGER.debug(
+                        "Found USB device with VFAT partition: %s", disk.get("name")
+                    )
                     return True
 
         # Additional checks for flash drive identification
@@ -941,13 +1055,24 @@ class UnraidApiClient:
 
         # Common flash drive indicators
         flash_indicators = [
-            "flash", "usb", "ultra fit", "cruzer", "datatraveler",
-            "jetflash", "store", "pendrive", "thumb"
+            "flash",
+            "usb",
+            "ultra fit",
+            "cruzer",
+            "datatraveler",
+            "jetflash",
+            "store",
+            "pendrive",
+            "thumb",
         ]
 
         for indicator in flash_indicators:
             if indicator in device_name or indicator in vendor:
-                _LOGGER.debug("Found potential flash drive by name/vendor: %s (%s)", device_name, vendor)
+                _LOGGER.debug(
+                    "Found potential flash drive by name/vendor: %s (%s)",
+                    device_name,
+                    vendor,
+                )
                 return True
 
         return False
@@ -970,7 +1095,9 @@ class UnraidApiClient:
         if main_partition:
             # Convert partition size from bytes to KiB for consistency with array disks
             partition_size_bytes = main_partition.get("size", 0)
-            fs_size_kib = int(partition_size_bytes / 1024) if partition_size_bytes else 0
+            fs_size_kib = (
+                int(partition_size_bytes / 1024) if partition_size_bytes else 0
+            )
 
             # For flash drives, we typically don't have separate free/used data
             # We'll use the partition size as total and estimate usage
@@ -1077,31 +1204,69 @@ class UnraidApiClient:
             array {
                 parities {
                     id
+                    idx
                     name
                     device
                     size
                     status
                     type
+                    temp
+                    rotational
+                    numReads
+                    numWrites
+                    numErrors
+                    transport
+                    color
+                    comment
+                    format
                 }
                 disks {
                     id
+                    idx
                     name
                     device
                     status
                     type
+                    size
+                    temp
+                    rotational
+                    numReads
+                    numWrites
+                    numErrors
                     fsSize
                     fsFree
                     fsUsed
+                    fsType
+                    transport
+                    color
+                    comment
+                    format
+                    warning
+                    critical
                 }
                 caches {
                     id
+                    idx
                     name
                     device
                     status
                     type
+                    size
+                    temp
+                    rotational
+                    numReads
+                    numWrites
+                    numErrors
                     fsSize
                     fsFree
                     fsUsed
+                    fsType
+                    transport
+                    color
+                    comment
+                    format
+                    warning
+                    critical
                 }
             }
         }
@@ -1178,7 +1343,9 @@ class UnraidApiClient:
 
     # Note: _update_spindown_config method removed as spindown protection has been disabled
 
-    def _update_disk_with_health_data(self, disk: dict[str, Any], health_data: dict[str, Any]) -> None:
+    def _update_disk_with_health_data(
+        self, disk: dict[str, Any], health_data: dict[str, Any]
+    ) -> None:
         """Update disk with fresh health data."""
         disk_name = disk.get("name", "unknown")
 
@@ -1197,7 +1364,14 @@ class UnraidApiClient:
             _LOGGER.debug("Updated disk %s SMART status: %s", disk_name, smart_status)
 
         # Update additional disk information
-        for field in ["vendor", "size", "serialNum", "firmwareRevision", "interfaceType", "id"]:
+        for field in [
+            "vendor",
+            "size",
+            "serialNum",
+            "firmwareRevision",
+            "interfaceType",
+            "id",
+        ]:
             if field in health_data and health_data[field] is not None:
                 disk[field] = health_data[field]
 
@@ -1207,6 +1381,7 @@ class UnraidApiClient:
 
         # Mark as having fresh data
         import time
+
         disk["health_data_source"] = "live"
         disk["health_data_timestamp"] = time.time()
 
@@ -1268,7 +1443,14 @@ class UnraidApiClient:
                 )
 
             # Update additional disk information from the official schema
-            for field in ["vendor", "size", "serialNum", "firmwareRevision", "interfaceType", "id"]:
+            for field in [
+                "vendor",
+                "size",
+                "serialNum",
+                "firmwareRevision",
+                "interfaceType",
+                "id",
+            ]:
                 if field in disk and disk[field] is not None:
                     cache_disk[field] = disk[field]
 
@@ -1376,7 +1558,14 @@ class UnraidApiClient:
                 )
 
             # Update additional disk information from the official schema
-            for field in ["vendor", "size", "serialNum", "firmwareRevision", "interfaceType", "state"]:
+            for field in [
+                "vendor",
+                "size",
+                "serialNum",
+                "firmwareRevision",
+                "interfaceType",
+                "state",
+            ]:
                 if field in api_disk and api_disk[field] is not None:
                     disk[field] = api_disk[field]
 
@@ -1403,7 +1592,9 @@ class UnraidApiClient:
                     len(api_disk["partitions"]),
                 )
 
-            _LOGGER.debug("Updated %s disk %s health information", disk_category, disk_name)
+            _LOGGER.debug(
+                "Updated %s disk %s health information", disk_category, disk_name
+            )
             break  # Found a match, no need to continue
 
     async def get_array_status(self) -> dict[str, Any]:
@@ -1437,9 +1628,19 @@ class UnraidApiClient:
                         id
                         names
                         image
+                        imageId
+                        command
+                        created
                         state
                         status
                         autoStart
+                        sizeRootFs
+                        labels
+                        hostConfig {
+                            networkMode
+                        }
+                        networkSettings
+                        mounts
                         ports {
                             ip
                             privatePort
@@ -1471,7 +1672,7 @@ class UnraidApiClient:
         Returns a dictionary with a 'vms' key containing both 'domain' and 'domains' keys.
         """
         # Use cached successful query pattern if available
-        if hasattr(self, '_vm_query_preference') and self._vm_query_preference:
+        if hasattr(self, "_vm_query_preference") and self._vm_query_preference:
             try:
                 response = await self._send_graphql_request(self._vm_query_preference)
                 if self._process_vm_response(response):
@@ -1496,7 +1697,7 @@ class UnraidApiClient:
                     }
                 }
                 """,
-                "path": ["vms", "domain"]
+                "path": ["vms", "domain"],
             },
             {
                 "name": "alternative_domains",
@@ -1511,7 +1712,7 @@ class UnraidApiClient:
                     }
                 }
                 """,
-                "path": ["vms", "domains"]
+                "path": ["vms", "domains"],
             },
             {
                 "name": "system_fallback",
@@ -1528,19 +1729,24 @@ class UnraidApiClient:
                     }
                 }
                 """,
-                "path": ["info", "system", "vms"]
-            }
+                "path": ["info", "system", "vms"],
+            },
         ]
 
         for query_config in vm_queries:
             try:
                 response = await self._send_graphql_request(query_config["query"])
-                processed_response = self._process_vm_response(response, query_config["path"])
+                processed_response = self._process_vm_response(
+                    response, query_config["path"]
+                )
 
                 if processed_response:
                     # Cache successful query for future use
                     self._vm_query_preference = query_config["query"]
-                    _LOGGER.debug("VM query '%s' successful, caching for future use", query_config["name"])
+                    _LOGGER.debug(
+                        "VM query '%s' successful, caching for future use",
+                        query_config["name"],
+                    )
                     return processed_response
 
             except Exception as err:
@@ -1551,7 +1757,9 @@ class UnraidApiClient:
         _LOGGER.warning("All VM queries failed, returning empty VM data")
         return {"vms": {"domain": [], "domains": []}}
 
-    def _process_vm_response(self, response: dict[str, Any], path: list[str] = None) -> dict[str, Any] | None:
+    def _process_vm_response(
+        self, response: dict[str, Any], path: list[str] = None
+    ) -> dict[str, Any] | None:
         """Process VM response and normalize to consistent format."""
         try:
             if not response or "data" not in response:
@@ -1834,13 +2042,13 @@ class UnraidApiClient:
                     disk_type = health_data.get("type", "unknown").lower()
                     sensor_name = f"{disk_type}_{disk_name}"
 
-                    sensors.append({
-                        "name": sensor_name,
-                        "value": float(temp),
-                        "source": "live"
-                    })
+                    sensors.append(
+                        {"name": sensor_name, "value": float(temp), "source": "live"}
+                    )
 
-                    _LOGGER.debug("Disk temperature sensor: %s = %s°C", sensor_name, temp)
+                    _LOGGER.debug(
+                        "Disk temperature sensor: %s = %s°C", sensor_name, temp
+                    )
 
             # Add cached temperature data for disks that are not safe to query
             for disk_id, disk_state in disk_states.items():
@@ -1851,17 +2059,19 @@ class UnraidApiClient:
                         disk_type = disk_state.get("type", "unknown").lower()
                         sensor_name = f"{disk_type}_{disk_name}"
 
-                        sensors.append({
-                            "name": sensor_name,
-                            "value": float(last_temp),
-                            "source": "cached",
-                            "note": "Disk may be in standby"
-                        })
+                        sensors.append(
+                            {
+                                "name": sensor_name,
+                                "value": float(last_temp),
+                                "source": "cached",
+                                "note": "Disk may be in standby",
+                            }
+                        )
 
                         _LOGGER.debug(
                             "Disk temperature sensor (cached): %s = %s°C",
                             sensor_name,
-                            last_temp
+                            last_temp,
                         )
 
         except UnraidApiError as err:
@@ -1921,6 +2131,117 @@ class UnraidApiClient:
         except UnraidApiError as err:
             # This is expected to fail on many systems as the endpoint might not exist
             _LOGGER.debug("GraphQL hardware sensors query failed: %s", err)
+
+        return result
+
+    async def get_ups_devices(self) -> dict[str, Any]:
+        """Get UPS devices information using v4.12 schema."""
+        result = {"ups_devices": [], "ups_configuration": {}}
+
+        try:
+            # Query UPS devices and configuration using v4.12 schema
+            ups_query = """
+            query GetUPSInfo {
+                upsDevices {
+                    id
+                    name
+                    model
+                    status
+                    battery {
+                        chargeLevel
+                        estimatedRuntime
+                        health
+                    }
+                    power {
+                        inputVoltage
+                        outputVoltage
+                        loadPercentage
+                    }
+                }
+                upsConfiguration {
+                    service
+                    upsCable
+                    customUpsCable
+                    upsType
+                    device
+                    overrideUpsCapacity
+                    batteryLevel
+                    minutes
+                    timeout
+                    killUps
+                    nisIp
+                    netServer
+                    upsName
+                    modelName
+                }
+            }
+            """
+
+            _LOGGER.debug("Fetching UPS devices and configuration")
+            response = await self._send_graphql_request(ups_query)
+
+            if "data" in response:
+                data = response["data"]
+
+                # Process UPS devices
+                if "upsDevices" in data and data["upsDevices"]:
+                    result["ups_devices"] = data["upsDevices"]
+                    _LOGGER.debug("Found %d UPS devices", len(result["ups_devices"]))
+
+                # Process UPS configuration
+                if "upsConfiguration" in data and data["upsConfiguration"]:
+                    result["ups_configuration"] = data["upsConfiguration"]
+                    _LOGGER.debug("Retrieved UPS configuration")
+
+        except UnraidApiError as err:
+            _LOGGER.debug("UPS query failed (may not be configured): %s", err)
+        except Exception as err:
+            _LOGGER.warning("Error getting UPS information: %s", err)
+
+        return result
+
+    async def get_enhanced_disk_info(self) -> dict[str, Any]:
+        """Get enhanced disk information with temperature monitoring using v4.12 schema."""
+        result = {"disks": []}
+
+        try:
+            # Query enhanced disk information
+            disk_query = """
+            query GetEnhancedDiskInfo {
+                disks {
+                    id
+                    device
+                    type
+                    name
+                    vendor
+                    size
+                    temperature
+                    smartStatus
+                    interfaceType
+                    firmwareRevision
+                    serialNum
+                    partitions {
+                        name
+                        fsType
+                        size
+                    }
+                }
+            }
+            """
+
+            _LOGGER.debug("Fetching enhanced disk information")
+            response = await self._send_graphql_request(disk_query)
+
+            if "data" in response and "disks" in response["data"]:
+                result["disks"] = response["data"]["disks"]
+                _LOGGER.debug(
+                    "Retrieved enhanced info for %d disks", len(result["disks"])
+                )
+
+        except UnraidApiError as err:
+            _LOGGER.debug("Enhanced disk query failed: %s", err)
+        except Exception as err:
+            _LOGGER.warning("Error getting enhanced disk information: %s", err)
 
         return result
 
@@ -2396,7 +2717,7 @@ class UnraidApiClient:
         if action not in valid_actions:
             return {
                 "error": f"Invalid action '{action}'. Must be one of: {', '.join(valid_actions)}",
-                "code": "INVALID_ACTION"
+                "code": "INVALID_ACTION",
             }
 
         # Extract the actual ID if it's a prefixed ID
@@ -2404,36 +2725,20 @@ class UnraidApiClient:
 
         # Map actions to their GraphQL mutations and parameter types
         action_config = {
-            "start": {
-                "mutation": "start",
-                "id_type": "PrefixedID!",
-                "params": {}
-            },
+            "start": {"mutation": "start", "id_type": "PrefixedID!", "params": {}},
             "stop": {
                 "mutation": "stop",
                 "id_type": "PrefixedID!",
-                "params": {"force": kwargs.get("force", False)}
+                "params": {"force": kwargs.get("force", False)},
             },
-            "pause": {
-                "mutation": "pause",
-                "id_type": "String!",
-                "params": {}
-            },
-            "resume": {
-                "mutation": "resume",
-                "id_type": "String!",
-                "params": {}
-            },
-            "reboot": {
-                "mutation": "reboot",
-                "id_type": "PrefixedID!",
-                "params": {}
-            },
+            "pause": {"mutation": "pause", "id_type": "String!", "params": {}},
+            "resume": {"mutation": "resume", "id_type": "String!", "params": {}},
+            "reboot": {"mutation": "reboot", "id_type": "PrefixedID!", "params": {}},
             "force_stop": {
                 "mutation": "forceStop",
                 "id_type": "PrefixedID!",
-                "params": {}
-            }
+                "params": {},
+            },
         }
 
         config = action_config[action]
@@ -2455,9 +2760,9 @@ class UnraidApiClient:
                 variables[param_name] = param_value
 
         query = f"""
-        mutation {mutation_name.title()}Vm({', '.join(param_definitions)}) {{
+        mutation {mutation_name.title()}Vm({", ".join(param_definitions)}) {{
             vm {{
-                {mutation_name}({', '.join(param_calls)})
+                {mutation_name}({", ".join(param_calls)})
             }}
         }}
         """
@@ -2472,14 +2777,14 @@ class UnraidApiClient:
                     "success": success,
                     "action": action,
                     "vm_id": vm_id,
-                    "mutation": mutation_name
+                    "mutation": mutation_name,
                 }
             elif result:
                 return result
             else:
                 return {
                     "error": f"Failed to {action} VM or unexpected response structure",
-                    "code": "UNEXPECTED_RESPONSE"
+                    "code": "UNEXPECTED_RESPONSE",
                 }
 
         except UnraidApiError as err:
@@ -2488,10 +2793,12 @@ class UnraidApiClient:
             _LOGGER.error("Unexpected error during VM %s: %s", action, err)
             return {
                 "error": f"Unexpected error during VM {action}: {err}",
-                "code": "UNEXPECTED_ERROR"
+                "code": "UNEXPECTED_ERROR",
             }
 
-    def _handle_vm_error(self, err: UnraidApiError, action: str, vm_id: str) -> dict[str, Any]:
+    def _handle_vm_error(
+        self, err: UnraidApiError, action: str, vm_id: str
+    ) -> dict[str, Any]:
         """Handle VM operation errors with specific error codes."""
         error_str = str(err)
 
@@ -2499,31 +2806,31 @@ class UnraidApiClient:
             return {
                 "error": f"Cannot {action} VM while array is running",
                 "code": "ARRAY_RUNNING",
-                "vm_id": vm_id
+                "vm_id": vm_id,
             }
         elif "Authentication" in error_str or "Forbidden" in error_str:
             return {
                 "error": f"Authentication failed or insufficient permissions for VM {action}",
                 "code": "AUTH_FAILED",
-                "vm_id": vm_id
+                "vm_id": vm_id,
             }
         elif "VMs are not available" in error_str:
             return {
                 "error": "VM service is not available on this Unraid server",
                 "code": "VM_SERVICE_UNAVAILABLE",
-                "vm_id": vm_id
+                "vm_id": vm_id,
             }
         elif "not found" in error_str.lower():
             return {
                 "error": f"VM with ID '{vm_id}' not found",
                 "code": "VM_NOT_FOUND",
-                "vm_id": vm_id
+                "vm_id": vm_id,
             }
         else:
             return {
                 "error": f"Failed to {action} VM: {err}",
                 "code": "API_ERROR",
-                "vm_id": vm_id
+                "vm_id": vm_id,
             }
 
     async def start_vm(self, vm_id: str) -> dict[str, Any]:

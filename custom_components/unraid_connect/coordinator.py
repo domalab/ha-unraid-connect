@@ -39,19 +39,19 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._cache_timestamps: dict[str, datetime] = {}
         self._cache_ttl: dict[str, int] = {
             # Real-time data (critical monitoring)
-            "array_status": 30,           # 30 seconds - disk temps, SMART, usage
-            "docker_containers": 60,      # 1 minute - container states
-            "vms": 60,                   # 1 minute - VM states
-            "notifications": 120,         # 2 minutes - alerts
-
+            "array_status": 30,  # 30 seconds - disk temps, SMART, usage
+            "docker_containers": 60,  # 1 minute - container states
+            "vms": 60,  # 1 minute - VM states
+            "notifications": 120,  # 2 minutes - alerts
             # Medium frequency data (operational)
-            "system_info": 600,          # 10 minutes - system resources
-            "shares": 900,               # 15 minutes - share usage
-
+            "system_info": 600,  # 10 minutes - system resources
+            "shares": 900,  # 15 minutes - share usage
+            "ups_devices": 300,  # 5 minutes - UPS status and power info
             # Static/semi-static data (hardware info)
-            "disk_hardware": 86400,      # 24 hours - disk serial, firmware, etc.
-            "system_hardware": 86400,    # 24 hours - CPU model, cores, etc.
-            "container_config": 900,     # 15 minutes - images, ports, etc.
+            "disk_hardware": 86400,  # 24 hours - disk serial, firmware, etc.
+            "system_hardware": 86400,  # 24 hours - CPU model, cores, etc.
+            "container_config": 900,  # 15 minutes - images, ports, etc.
+            "enhanced_disks": 1800,  # 30 minutes - enhanced disk info with temperatures
         }
 
         # Network efficiency: Batch API calls
@@ -92,7 +92,9 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._data_cache[data_type] = data
         self._cache_timestamps[data_type] = datetime.now()
 
-    async def _batch_api_call(self, call_name: str, api_func, *args, **kwargs) -> dict[str, Any]:
+    async def _batch_api_call(
+        self, call_name: str, api_func, *args, **kwargs
+    ) -> dict[str, Any]:
         """Execute API calls with batching to prevent duplicate requests."""
         async with self._api_call_lock:
             # Check if this call is already pending
@@ -127,9 +129,11 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         "vms": {},
                         "shares": {},
                         "notifications": {},
-                        "disk_hardware": {},      # Static disk hardware info
-                        "system_hardware": {},    # Static system hardware info
-                        "container_config": {},   # Semi-static container config
+                        "disk_hardware": {},  # Static disk hardware info
+                        "system_hardware": {},  # Static system hardware info
+                        "container_config": {},  # Semi-static container config
+                        "ups_devices": {},  # UPS monitoring data
+                        "enhanced_disks": {},  # Enhanced disk info with temperatures
                     }
 
                 # Note: Detail update counter removed as spindown protection has been disabled
@@ -159,38 +163,76 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if not self._is_cache_valid("notifications"):
                     fetch_tasks.append(self._fetch_notifications_cached())
 
+                # Fetch UPS devices (medium frequency updates - 5 minutes)
+                ups_cache_valid = self._is_cache_valid("ups_devices")
+                _LOGGER.debug("UPS cache valid: %s", ups_cache_valid)
+                if not ups_cache_valid:
+                    try:
+                        _LOGGER.debug("Adding UPS devices fetch task to queue")
+                        fetch_tasks.append(self._fetch_ups_devices_cached())
+                    except Exception as err:
+                        _LOGGER.debug(
+                            "Skipping UPS devices cache due to error: %s", err
+                        )
+
                 # Static/semi-static data (15min-24hr) - re-enabled with safer implementation
                 # Only fetch static data if integration has been running for more than 5 minutes
                 # This prevents issues during startup and ensures core functionality is stable
-                if (hasattr(self, '_startup_time') and
-                    (datetime.now() - self._startup_time).total_seconds() > 300):
-
+                if (
+                    hasattr(self, "_startup_time")
+                    and (datetime.now() - self._startup_time).total_seconds() > 300
+                ):
                     if not self._is_cache_valid("disk_hardware"):
                         try:
                             fetch_tasks.append(self._fetch_disk_hardware_cached())
                         except Exception as err:
-                            _LOGGER.debug("Skipping disk hardware cache due to error: %s", err)
+                            _LOGGER.debug(
+                                "Skipping disk hardware cache due to error: %s", err
+                            )
 
                     if not self._is_cache_valid("system_hardware"):
                         try:
                             fetch_tasks.append(self._fetch_system_hardware_cached())
                         except Exception as err:
-                            _LOGGER.debug("Skipping system hardware cache due to error: %s", err)
+                            _LOGGER.debug(
+                                "Skipping system hardware cache due to error: %s", err
+                            )
 
                     if not self._is_cache_valid("container_config"):
                         try:
                             fetch_tasks.append(self._fetch_container_config_cached())
                         except Exception as err:
-                            _LOGGER.debug("Skipping container config cache due to error: %s", err)
+                            _LOGGER.debug(
+                                "Skipping container config cache due to error: %s", err
+                            )
+
+                    # Fetch enhanced disk info (less frequent updates)
+                    if not self._is_cache_valid("enhanced_disks"):
+                        try:
+                            fetch_tasks.append(self._fetch_enhanced_disks_cached())
+                        except Exception as err:
+                            _LOGGER.debug(
+                                "Skipping enhanced disks cache due to error: %s", err
+                            )
 
                 # Execute all fetch tasks concurrently
                 if fetch_tasks:
                     await asyncio.gather(*fetch_tasks, return_exceptions=True)
 
                 # Update data from cache (all cache categories)
-                for data_type in ["system_info", "array_status", "docker_containers",
-                                "vms", "shares", "notifications", "disk_hardware",
-                                "system_hardware", "container_config"]:
+                for data_type in [
+                    "system_info",
+                    "array_status",
+                    "docker_containers",
+                    "vms",
+                    "shares",
+                    "notifications",
+                    "disk_hardware",
+                    "system_hardware",
+                    "container_config",
+                    "ups_devices",
+                    "enhanced_disks",
+                ]:
                     cached_data = self._get_cached_data(data_type)
                     if cached_data is not None:
                         self.data[data_type] = cached_data
@@ -228,7 +270,9 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _fetch_system_info_cached(self) -> None:
         """Fetch system info with caching."""
         try:
-            system_info = await self._batch_api_call("system_info", self.api.get_system_info)
+            system_info = await self._batch_api_call(
+                "system_info", self.api.get_system_info
+            )
             self._cache_data("system_info", system_info)
             _LOGGER.debug("Fetched and cached system info")
         except Exception as err:
@@ -237,7 +281,9 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _fetch_docker_containers_cached(self) -> None:
         """Fetch docker containers with caching."""
         try:
-            containers = await self._batch_api_call("docker_containers", self.api.get_docker_containers)
+            containers = await self._batch_api_call(
+                "docker_containers", self.api.get_docker_containers
+            )
             self._cache_data("docker_containers", containers)
             _LOGGER.debug("Fetched and cached docker containers")
         except Exception as err:
@@ -254,17 +300,23 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if not vm_domains:
                 vm_domains = vms.get("vms", {}).get("domains", [])
 
-            _LOGGER.debug("Fetched and cached %d VMs", len(vm_domains) if vm_domains else 0)
+            _LOGGER.debug(
+                "Fetched and cached %d VMs", len(vm_domains) if vm_domains else 0
+            )
         except Exception as err:
             _LOGGER.error("Error fetching VMs: %s", err)
 
     async def _fetch_notifications_cached(self) -> None:
         """Fetch notifications with caching."""
         try:
-            notifications = await self._batch_api_call("notifications", self.api.get_notifications, limit=10)
+            notifications = await self._batch_api_call(
+                "notifications", self.api.get_notifications, limit=10
+            )
             self._cache_data("notifications", notifications)
 
-            unread_count = notifications.get("overview", {}).get("unread", {}).get("total", 0)
+            unread_count = (
+                notifications.get("overview", {}).get("unread", {}).get("total", 0)
+            )
             _LOGGER.debug("Fetched and cached %d unread notifications", unread_count)
         except Exception as err:
             _LOGGER.error("Error fetching notifications: %s", err)
@@ -284,7 +336,9 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Note: Disk detail querying logic simplified as spindown protection has been removed
             _LOGGER.debug("Fetching array status with full disk details")
 
-            array_status = await self._batch_api_call("array_status", self.api.get_array_status)
+            array_status = await self._batch_api_call(
+                "array_status", self.api.get_array_status
+            )
 
             # Note: Spindown configuration processing removed
 
@@ -479,7 +533,9 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Fetch static disk hardware information with long-term caching."""
         try:
             # Get only static hardware attributes from disk health query
-            disk_hardware = await self._batch_api_call("disk_hardware", self.api._get_static_disk_info)
+            disk_hardware = await self._batch_api_call(
+                "disk_hardware", self.api._get_static_disk_info
+            )
             self._cache_data("disk_hardware", disk_hardware)
             _LOGGER.debug("Fetched and cached static disk hardware info")
         except Exception as err:
@@ -489,7 +545,9 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Fetch static system hardware information with long-term caching."""
         try:
             # Get only static hardware attributes from system info query
-            system_hardware = await self._batch_api_call("system_hardware", self.api._get_static_system_info)
+            system_hardware = await self._batch_api_call(
+                "system_hardware", self.api._get_static_system_info
+            )
             self._cache_data("system_hardware", system_hardware)
             _LOGGER.debug("Fetched and cached static system hardware info")
         except Exception as err:
@@ -499,8 +557,32 @@ class UnraidDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Fetch semi-static container configuration with medium-term caching."""
         try:
             # Get only configuration attributes from container query
-            container_config = await self._batch_api_call("container_config", self.api._get_container_config)
+            container_config = await self._batch_api_call(
+                "container_config", self.api._get_container_config
+            )
             self._cache_data("container_config", container_config)
             _LOGGER.debug("Fetched and cached container configuration info")
         except Exception as err:
             _LOGGER.debug("Error fetching container config: %s", err)
+
+    async def _fetch_ups_devices_cached(self) -> None:
+        """Fetch UPS devices information with caching."""
+        try:
+            ups_data = await self._batch_api_call(
+                "ups_devices", self.api.get_ups_devices
+            )
+            self._cache_data("ups_devices", ups_data)
+            _LOGGER.debug("Fetched and cached UPS devices info")
+        except Exception as err:
+            _LOGGER.debug("Error fetching UPS devices: %s", err)
+
+    async def _fetch_enhanced_disks_cached(self) -> None:
+        """Fetch enhanced disk information with temperature monitoring."""
+        try:
+            enhanced_disks = await self._batch_api_call(
+                "enhanced_disks", self.api.get_enhanced_disk_info
+            )
+            self._cache_data("enhanced_disks", enhanced_disks)
+            _LOGGER.debug("Fetched and cached enhanced disk info")
+        except Exception as err:
+            _LOGGER.debug("Error fetching enhanced disk info: %s", err)
