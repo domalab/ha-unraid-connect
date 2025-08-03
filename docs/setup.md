@@ -4,8 +4,8 @@ This guide walks you through setting up the Unraid Connect integration for Home 
 
 ## Prerequisites
 
-- **Unraid Server**: Running Unraid 6.12+ with Unraid Connect plugin
-- **Home Assistant**: Version 2025.1.0 or later
+- **Unraid Server**: Running Unraid 7.+ with Unraid Connect plugin
+- **Home Assistant**: Version 2025.7.0 or later
 - **Network Access**: Home Assistant can reach your Unraid server
 
 ## Step 1: Install and Configure Unraid Connect Plugin
