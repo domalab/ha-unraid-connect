@@ -7,7 +7,7 @@
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/domalab/ha-unraid-connect)
 
 > **⚠️ BETA SOFTWARE WARNING**
-> This integration is currently in **beta phase**. The Unraid GraphQL API is still under active development by the Unraid team, and many features may not work as expected or may be unavailable. Use at your own risk and expect breaking changes.
+> This integration is currently in **beta phase**. The Unraid GraphQL API is under active development by the Unraid team, and many features may not work as expected or may be unavailable. Use at your own risk and expect breaking changes.
 
 A comprehensive Home Assistant integration for monitoring and controlling Unraid servers via the Unraid Connect plugin's GraphQL API.
 
@@ -182,7 +182,7 @@ Based on analysis of the [Unraid API repository](https://github.com/unraid/api),
 | VM Status                | ⚠️                | ✅              | Intermittent failures in Connect       |
 | **Advanced Features**    |
 | User Scripts             | ❌                | ✅              | Not available in GraphQL API           |
-| UPS Monitoring           | ❌                | ✅              | Not exposed via GraphQL                |
+| UPS Monitoring           | ✅                | ✅              | Not exposed via GraphQL                |
 | Plugin Management        | ❌                | ✅              | No GraphQL endpoints                   |
 | System Fans              | ❌                | ✅              | Not available in GraphQL API           |
 | **Reliability**          |
