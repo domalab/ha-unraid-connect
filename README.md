@@ -25,10 +25,8 @@ A comprehensive Home Assistant integration for monitoring and controlling Unraid
 
 This integration requires the **Unraid Connect** plugin to be installed on your Unraid server:
 
-1. Install the Unraid Connect plugin from the Community Applications (version 2025.05.01.2159 or later recommended)
+1. Install the Unraid Connect plugin from the Community Applications
 2. Configure the plugin and obtain an API key - [docs/setup.md](https://github.com/domalab/ha-unraid-connect/blob/main/docs/setup.md)
-
-> **Note**: CORS configuration is no longer required! Recent plugin versions have resolved the API origins issue, significantly simplifying the setup process.
 
 ## Installation
 
@@ -164,33 +162,33 @@ Based on analysis of the [Unraid API repository](https://github.com/unraid/api),
 
 ### Feature Comparison with SSH Integration
 
-| Feature | Connect (GraphQL) | SSH Integration | Notes |
-|---------|-------------------|-----------------|-------|
-| **System Monitoring** |
-| CPU Usage | ✅ | ✅ | Both provide real-time data |
-| Memory Usage | ⚠️ | ✅ | Connect limited to 32-bit values |
-| Disk Usage | ✅ | ✅ | Connect provides more detailed info |
-| Temperatures | ✅ | ✅ | Connect has better sensor coverage |
-| **Array Management** |
-| Array Status | ✅ | ✅ | Connect provides more detailed states |
-| Disk Health | ✅ | ✅ | Connect has structured health data |
-| Parity Operations | ⚠️ | ✅ | Connect has known issues |
-| Disk Spin Status | ❌ | ✅ | Missing from GraphQL API |
+| Feature                  | Connect (GraphQL) | SSH Integration | Notes                                  |
+| ------------------------ | ----------------- | --------------- | -------------------------------------- |
+| **System Monitoring**    |
+| CPU Usage                | ✅                | ✅              | Both provide real-time data            |
+| Memory Usage             | ⚠️                | ✅              | Connect limited to 32-bit values       |
+| Disk Usage               | ✅                | ✅              | Connect provides more detailed info    |
+| Temperatures             | ✅                | ✅              | Connect has better sensor coverage     |
+| **Array Management**     |
+| Array Status             | ✅                | ✅              | Connect provides more detailed states  |
+| Disk Health              | ✅                | ✅              | Connect has structured health data     |
+| Parity Operations        | ⚠️                | ✅              | Connect has known issues               |
+| Disk Spin Status         | ❌                | ✅              | Missing from GraphQL API               |
 | **Container Management** |
-| Docker Control | ✅ | ✅ | Both support start/stop/restart |
-| Container Logs | ✅ | ✅ | Connect provides structured access |
-| **VM Management** |
-| VM Control | ⚠️ | ✅ | Connect has query reliability issues |
-| VM Status | ⚠️ | ✅ | Intermittent failures in Connect |
-| **Advanced Features** |
-| User Scripts | ❌ | ✅ | Not available in GraphQL API |
-| UPS Monitoring | ❌ | ✅ | Not exposed via GraphQL |
-| Plugin Management | ❌ | ✅ | No GraphQL endpoints |
-| System Fans | ❌ | ✅ | Not available in GraphQL API |
-| **Reliability** |
-| Connection Stability | ⚠️ | ✅ | Connect depends on plugin stability |
-| Error Handling | ✅ | ⚠️ | Connect has better structured errors |
-| Performance | ✅ | ⚠️ | Connect is more efficient when working |
+| Docker Control           | ✅                | ✅              | Both support start/stop/restart        |
+| Container Logs           | ✅                | ✅              | Connect provides structured access     |
+| **VM Management**        |
+| VM Control               | ⚠️                | ✅              | Connect has query reliability issues   |
+| VM Status                | ⚠️                | ✅              | Intermittent failures in Connect       |
+| **Advanced Features**    |
+| User Scripts             | ❌                | ✅              | Not available in GraphQL API           |
+| UPS Monitoring           | ❌                | ✅              | Not exposed via GraphQL                |
+| Plugin Management        | ❌                | ✅              | No GraphQL endpoints                   |
+| System Fans              | ❌                | ✅              | Not available in GraphQL API           |
+| **Reliability**          |
+| Connection Stability     | ⚠️                | ✅              | Connect depends on plugin stability    |
+| Error Handling           | ✅                | ⚠️              | Connect has better structured errors   |
+| Performance              | ✅                | ⚠️              | Connect is more efficient when working |
 
 **Legend**: ✅ Fully Supported | ⚠️ Partial/Issues | ❌ Not Available
 
@@ -283,11 +281,13 @@ This section provides comprehensive guidance for setting up a development enviro
 Before starting development, ensure you have the following software installed:
 
 - **Docker**: Required for running the development container
+
   - [Install Docker Desktop](https://docs.docker.com/get-docker/) (Windows/macOS)
   - [Install Docker Engine](https://docs.docker.com/engine/install/) (Linux)
   - Minimum version: Docker 20.10+
 
 - **Visual Studio Code**: Primary development environment
+
   - [Download VS Code](https://code.visualstudio.com/)
   - Minimum version: VS Code 1.60+
 
@@ -302,17 +302,20 @@ The project includes a pre-configured development container that provides a comp
 #### Opening the Project in Devcontainer
 
 1. **Clone the repository**:
+
    ```bash
    git clone https://github.com/domalab/ha-unraid-connect.git
    cd ha-unraid-connect
    ```
 
 2. **Open in VS Code**:
+
    ```bash
    code .
    ```
 
 3. **Launch the devcontainer**:
+
    - VS Code should automatically detect the devcontainer configuration
    - Click "Reopen in Container" when prompted, or
    - Use Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) → "Dev Containers: Reopen in Container"
@@ -342,11 +345,13 @@ The development environment includes:
 #### Starting the Development Environment
 
 1. **Launch Home Assistant with the integration**:
+
    ```bash
    scripts/develop
    ```
 
    This command:
+
    - Creates a `config` directory if it doesn't exist
    - Initializes Home Assistant configuration
    - Sets up Python path to include the custom component
@@ -360,11 +365,13 @@ The development environment includes:
 #### Testing the Integration
 
 1. **Configure the integration**:
+
    - Go to Settings → Devices & Services
    - Click "Add Integration" and search for "Unraid Connect"
    - Enter your Unraid server details for testing
 
 2. **Monitor logs and debug output**:
+
    - Debug logs are enabled by default when using `scripts/develop`
    - Watch the terminal for integration-specific log messages
    - Use Home Assistant's Developer Tools → Logs for web-based log viewing
@@ -377,6 +384,7 @@ The development environment includes:
 #### Code Quality and Linting
 
 1. **Run code linting**:
+
    ```bash
    scripts/lint
    ```
@@ -429,6 +437,7 @@ tail -f config/home-assistant.log
 #### Debugging and Logging
 
 1. **Enable debug logging** in `config/configuration.yaml`:
+
    ```yaml
    logger:
      default: info
@@ -444,11 +453,13 @@ tail -f config/home-assistant.log
 #### Testing Procedures
 
 1. **Manual testing**:
+
    - Test integration setup and configuration
    - Verify entity creation and updates
    - Test service calls and automation triggers
 
 2. **Integration testing**:
+
    - Use a real Unraid server with Connect plugin for full testing
    - Test various Unraid configurations (different array states, containers, etc.)
    - Verify error handling with network issues or API failures
@@ -461,11 +472,13 @@ tail -f config/home-assistant.log
 #### Contribution Workflow
 
 1. **Before starting development**:
+
    - Check existing issues and pull requests
    - Create an issue to discuss major changes
    - Fork the repository and create a feature branch
 
 2. **During development**:
+
    - Follow the existing code style and patterns
    - Add appropriate logging and error handling
    - Test changes thoroughly with real Unraid servers
